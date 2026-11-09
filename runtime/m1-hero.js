@@ -271,6 +271,72 @@ export const CONCEPTS = {
     },
   },
 
+  frames: {
+    label: 'Frame Tunnel',
+    family: 'Ecosystem',
+    blurb: 'Nested frames recede to one vanishing point and slowly stream outward. Light rests on opposite corners and traces each frame, and the vanishing point leans toward the cursor.',
+    // Defaults reproduce the Ecosystem hero art: wide is the 1162×582 tunnel, tall is the phone crop,
+    // where the vanishing point sits off the right edge and only the left and bottom sides show.
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 1.31, y: 0.41, s: 0.784 } },
+    params: {
+      count: p(6, 2, 16, 1, 'Frames'),
+      wMax: p(1800, 300, 3600, 1, 'Outer width'),
+      aspect: p(0.5, 0.2, 1.5, 0.01, 'Height ratio'),
+      step: p(0.83, 0.6, 0.95, 0.005, 'Frame step'),
+      inner: p(0.45, 0, 1, 0.01, 'Inner fade'),
+      lobes: p(2, 1, 2, 1, 'Corner light', { options: { 'One corner': 1, 'Opposite corners': 2 } }),
+      angle: p(135, 0, 360, 1, 'Light angle'),
+      contrast: p(0.85, 0, 1, 0.01, 'Light contrast'),
+      focus: p(1.5, 0.5, 8, 0.1, 'Light focus'),
+      vx: p(0, -900, 900, 1, 'Vanishing X'),
+      vy: p(0, -600, 600, 1, 'Vanishing Y'),
+      depth: p(0, 0, 400, 5, 'Depth'),
+      flow: p(1, 0, 4, 0.05, 'Flow speed'),
+      trace: p(0.8, 0, 3, 0.05, 'Light trace'),
+      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+    },
+    init(c, P, rnd) { return { ph: rnd() }; },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, n = Math.round(P.count);
+      // At t = 0 (the poster frame) the frames sit exactly on their resting sizes and the trace is dark.
+      const flow = t * 0.035 * P.flow, base = Math.floor(flow), fr = flow - base;
+      const wake = sstep(0, 3, t);
+      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
+      const lx = P.vx * u + c.mn.x * lean * 0.12 * W, ly = -P.vy * u + c.mn.y * lean * 0.1 * H;
+      const th0 = P.angle * Math.PI / 180, lobes = Math.round(P.lobes), con = P.contrast;
+      const sMin = Math.pow(P.step, n - 1);
+      for (let k = 0; k <= n; k++) {
+        const d = k - fr; // 0 = outermost resting frame, n - 1 = innermost
+        const sc = Math.pow(P.step, d);
+        const a0 = clamp(d + 1, 0, 1) * clamp(n - d, 0, 1) // fade out past the outer frame, in from the center
+          * (1 - P.inner * clamp(d / Math.max(1, n - 1), 0, 1)) * c.introAt(0.12 * (n - k));
+        if (a0 < 0.01) continue;
+        const w = P.wMax * u * sc, h = w * P.aspect;
+        const k1 = 1 - (sc - sMin) / (1 - sMin || 1); // 0 outer, 1 inner: deeper frames shift further
+        const cx = c.ax + lx * k1, cy = c.ay + ly * k1, z = -P.depth * u * d;
+        const thp = frac(t * 0.045 + (k + base) * 0.173 + st.ph) * TAU;
+        const alpha = (x, y) => {
+          const th = Math.atan2((y - cy) / P.aspect, x - cx);
+          const lit = Math.pow(0.5 + 0.5 * Math.cos(lobes * (th - th0)), P.focus);
+          const glint = P.trace * wake * (0.4 + I) * gauss(Math.atan2(Math.sin(th - thp), Math.cos(th - thp)) / 0.22);
+          return a0 * (1 - con + con * lit + glint);
+        };
+        const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
+        const C = [[x0, y1], [x1, y1], [x1, y0], [x0, y0], [x0, y1]];
+        const m = Math.max(12, Math.min(64, (w / 24) | 0));
+        pen.el(k, (k + base) & 1);
+        for (let sIdx = 0; sIdx < 4; sIdx++) {
+          const [ax, ay] = C[sIdx], [bx, by] = C[sIdx + 1], mm = sIdx & 1 ? Math.max(6, (m * P.aspect) | 0) : m;
+          for (let i = 0; i < mm; i++) {
+            const ta = i / mm, tb = (i + 1) / mm;
+            const xa = lerp(ax, bx, ta), ya = lerp(ay, by, ta), xb = lerp(ax, bx, tb), yb = lerp(ay, by, tb);
+            pen.seg(xa, ya, z, alpha(xa, ya), xb, yb, z, alpha(xb, yb));
+          }
+        }
+      }
+    },
+  },
+
   burst: {
     label: 'Signal Burst',
     family: 'Settlement',
@@ -1134,6 +1200,7 @@ export function createHero(el, config = {}, options = {}) {
 export const PRESETS = [
   { name: 'Institutions', cfg: { concept: 'orbit' } },
   { name: 'RMI', cfg: { concept: 'tunnel' } },
+  { name: 'Ecosystem', cfg: { concept: 'frames', look: { band: 0 }, portrait: { params: { count: 4, lobes: 1, angle: 225, focus: 4, contrast: 1 } } } },
   { name: 'Settlement', cfg: { concept: 'burst' } },
   { name: 'Newsroom', cfg: { concept: 'network' } },
   { name: 'Treasury Operations', cfg: { concept: 'tiles' } },
