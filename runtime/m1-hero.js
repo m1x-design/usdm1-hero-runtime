@@ -1,4 +1,4 @@
-// M1 Hero runtime v1.2.0
+// M1 Hero runtime v1.4.0
 // Renders USDM1 hairline hero art with WebGL. Shared by the generator and the Webflow embed.
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js';
 
@@ -182,7 +182,8 @@ const p = (v, min, max, step, label, extra) => Object.assign({ v, min, max, step
 
 export const CONCEPTS = {
   orbit: {
-    label: 'Orbit Arcs',
+    label: 'Institutions',
+    group: 'Pages',
     family: 'Institutions',
     blurb: 'Concentric arcs in shallow depth. Arcs breathe, light runs along each ring, and the stack tilts toward the cursor.',
     layout: { wide: { x: 0.1275, y: 1.017, s: 1 }, tall: { x: -0.865, y: 1.047, s: 1.13 } },
@@ -231,7 +232,8 @@ export const CONCEPTS = {
   },
 
   tunnel: {
-    label: 'Depth Tunnel',
+    label: 'RMI',
+    group: 'Pages',
     family: 'RMI',
     blurb: 'The nested ellipses become a true 3D tunnel that streams forward. Rings turn to face the cursor.',
     layout: { wide: { x: -0.01, y: 0.5, s: 1 }, tall: { x: -0.05, y: 0.42, s: 0.85 } },
@@ -272,7 +274,8 @@ export const CONCEPTS = {
   },
 
   frames: {
-    label: 'Frame Tunnel',
+    label: 'Ecosystem',
+    group: 'Pages',
     family: 'Ecosystem',
     blurb: 'Nested frames recede to one vanishing point and slowly stream outward. Light rests on opposite corners and traces each frame, and the vanishing point leans toward the cursor.',
     // Defaults reproduce the Ecosystem hero art: wide is the 1162×582 tunnel, tall is the phone crop,
@@ -338,7 +341,8 @@ export const CONCEPTS = {
   },
 
   burst: {
-    label: 'Signal Burst',
+    label: 'Settlement',
+    group: 'Use cases',
     family: 'Settlement',
     blurb: 'Rays converge on one focal node. Light packets travel inward and flash on arrival, and the focal point leans toward the cursor.',
     layout: { wide: { x: 0.5, y: 0.765, s: 1 }, tall: { x: 0.5, y: 0.79, s: 0.8 } },
@@ -411,7 +415,8 @@ export const CONCEPTS = {
   },
 
   network: {
-    label: 'Signal Network',
+    label: 'Newsroom',
+    group: 'Pages',
     family: 'Newsroom',
     blurb: 'Hub nodes fan out to the edges in depth. The network drifts, pulses travel inbound, and hubs lean toward the cursor.',
     layout: { wide: { x: 0.245, y: 0.76, s: 1 }, tall: { x: 0.35, y: 0.8, s: 0.85 } },
@@ -512,7 +517,8 @@ export const CONCEPTS = {
   },
 
   tiles: {
-    label: 'Tile Field',
+    label: 'Treasury Operations',
+    group: 'Use cases',
     family: 'Treasury, Repo, Roles',
     blurb: 'An outlined tile grid that lifts toward the viewer under the cursor like a lens, with a slow depth wave across the field.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 0.9 } },
@@ -585,7 +591,8 @@ export const CONCEPTS = {
   },
 
   bars: {
-    label: 'Ledger Bars',
+    label: 'Collateral Mobility',
+    group: 'Use cases',
     family: 'Collateral Mobility, Roles',
     blurb: 'Stacked outline bars that slide in and out like moving positions. A highlight sweeps through the stack and bars near the cursor reach toward it.',
     layout: { wide: { x: 0.3, y: 0.47, s: 1 }, tall: { x: 0.62, y: 0.4, s: 0.8 } },
@@ -660,7 +667,8 @@ export const CONCEPTS = {
   },
 
   waves: {
-    label: 'Crossing Waves',
+    label: 'Repo Cash Leg',
+    group: 'Use cases',
     family: 'Repo Cash',
     blurb: 'Nested waves cross at one point, like cash and collateral changing hands. Light runs both ways along the curves and the crossing leans toward the cursor.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.653, s: 0.454 } },
@@ -713,6 +721,899 @@ export const CONCEPTS = {
     },
   },
 };
+
+// ---------- Use case, institution and role concepts ----------
+// Drawn from the Figma "Primary - Hero" page. Art units are Figma px with the origin at the frame center and y down,
+// as in Figma; each draw maps them to world with X() and Y(). Split art (640 × 960) uses tall s 0.9375, so one
+// art px is one canvas px at 960 tall. Every motion is scaled by wake(t), so the poster frame (t = 0) is the art at rest.
+const wake = (t) => sstep(0, 3, t);
+const near = (c, x, y, R) => c.md * c.mouseAmt * gauss(Math.hypot(x - c.mx, y - c.my) / R);
+const offView = (c, x, y, hw, hh) => Math.abs(x) - hw > c.W / 2 + 4 || Math.abs(y) - hh > c.H / 2 + 4;
+const art = (c) => [(x) => c.ax + x * c.u, (y) => c.ay - y * c.u];
+// Rim light around a closed outline: brightest toward ang (deg, 0 = right, counterclockwise), like the Figma strokes.
+const rim = (base, ang, con = 0.45) => (s) => base * (1 - con + con * Math.cos(TAU * s - ang * Math.PI / 180));
+// Stroke an outline given as flat [x, y, ...] world points, subdivided so alpha can vary along it.
+// af(s, x, y): s is the position along the outline, 0 to 1.
+function outline(pen, P, z, af, closed = true) {
+  const n = P.length / 2, m = closed ? n : n - 1;
+  let per = 0; const acc = [0];
+  for (let i = 0; i < m; i++) { const j = (i + 1) % n; per += Math.hypot(P[j * 2] - P[i * 2], P[j * 2 + 1] - P[i * 2 + 1]); acc.push(per); }
+  if (per < 0.5) return;
+  const st = Math.max(10, per / 160);
+  let px = P[0], py = P[1], pa = af(0, px, py);
+  for (let i = 0; i < m; i++) {
+    const j = (i + 1) % n, x0 = P[i * 2], y0 = P[i * 2 + 1], x1 = P[j * 2], y1 = P[j * 2 + 1], len = acc[i + 1] - acc[i];
+    const k = Math.max(1, Math.ceil(len / st));
+    for (let q = 1; q <= k; q++) {
+      const f = q / k, x = q === k ? x1 : lerp(x0, x1, f), y = q === k ? y1 : lerp(y0, y1, f);
+      const a = af((acc[i] + len * f) / per, x, y);
+      pen.seg(px, py, z, pa, x, y, z, a); px = x; py = y; pa = a;
+    }
+  }
+}
+// Rounded rectangle outline in world units, starting on the right edge and running counterclockwise.
+function rrPath(cx, cy, w, h, r) {
+  r = clamp(r, 0, Math.min(w, h) / 2);
+  const k = r > 0.5 ? 6 : 0, P = [], hw = w / 2 - r, hh = h / 2 - r;
+  const cs = [[hw, hh], [-hw, hh], [-hw, -hh], [hw, -hh]];
+  for (let q = 0; q < 4; q++) for (let i = 0; i <= k; i++) {
+    const a = (q + (k ? i / k : 0.5)) * Math.PI / 2;
+    P.push(cx + cs[q][0] + Math.cos(a) * r, cy + cs[q][1] + Math.sin(a) * r);
+  }
+  return P;
+}
+const ring = (pen, cx, cy, d, z, af) => pen.loop(circlePts(48), cx, cy, z, d, d, af);
+const seeds = (rnd, n = 1024) => { const s = new Float32Array(n); for (let i = 0; i < n; i++) s[i] = rnd(); return { s }; };
+const sd = (st, i, j = 0) => st.s[((i * 131 + j * 31) % 1024 + 1024) % 1024];
+
+const SPLIT = { x: 0.5, y: 0.5, s: 0.9375 };
+
+// Structured Products panels, Figma px in the 1600 × 900 frame: [left, top, right, bottom].
+const PANELS = [
+  [34, -40, 435, 279], [34, 292, 435, 692], [447, -40, 635, 219], [650, -40, 735, 219], [748, -40, 954, 89],
+  [748, 102, 954, 219], [447, 232, 954, 692], [969, -40, 1238, 692], [1253, -40, 1570, 692], [34, 705, 1146, 960], [1161, 705, 1570, 960],
+];
+// OTC Desks column tops, Figma px in the 640 × 960 frame, 32.6 px apart. Repeats mirrored past the ends.
+const OTC_TOPS = [373, 375, 364, 356, 351, 338, 315, 292, 285, 299, 320, 327, 315, 302, 307, 336, 372, 391, 379, 348, 317, 297, 285, 273, 267, 279, 315, 364, 397, 396, 364, 327, 308, 308, 314, 311, 300, 294];
+// Hedge Funds and Trading Firms bars, Figma px in the 640 × 960 frame: [center x, width, top, bottom].
+const HEDGE = [
+  [34.5, 29, 400, 774], [85.5, 33, 357, 774], [140.5, 37, 320, 774], [202.5, 43, 269, 774], [269, 48, 217, 774], [337.5, 51, 186, 774],
+  [353.5, 51, 186, 679], [419, 48, 186, 650], [480.5, 43, 186, 626], [536.5, 37, 186, 587], [587.5, 33, 186, 558], [634.5, 29, 186, 533],
+];
+
+Object.assign(CONCEPTS, {
+  margin: {
+    label: 'Margin',
+    family: 'Margin',
+    group: 'Use cases',
+    blurb: 'A stack of rules that narrows row by row, like margin tightening. Light sweeps down the stack, the rows breathe in width, and rows near the cursor brighten and reach out.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 0.8 } },
+    tall: { wTop: 840, wBot: 100, top: -650, bottom: 520 }, // mobile and split start from these
+    params: {
+      count: p(13, 3, 40, 1, 'Rows'),
+      wTop: p(1600, 200, 3200, 10, 'Top width'),
+      wBot: p(192, 0, 1600, 2, 'Bottom width'),
+      taper: p(1, 0.3, 3, 0.05, 'Taper curve'),
+      top: p(-339, -1200, 400, 1, 'Top row Y'),
+      bottom: p(339, -400, 1200, 1, 'Bottom row Y'),
+      spacing: p(1.87, 0.5, 3, 0.01, 'Spacing curve'),
+      pills: p(4, 0, 12, 1, 'Pill rows'),
+      pillH: p(12, 2, 40, 1, 'Pill height'),
+      fade: p(0.65, 0, 1, 0.01, 'End fade'),
+      breathe: p(1, 0, 4, 0.05, 'Breathe'),
+      sweep: p(1, 0, 3, 0.05, 'Light sweep'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), n = Math.round(P.count), mo = wake(t) * (0.3 + I);
+      const np = Math.round(P.pills), pillAt = new Set();
+      for (let k = 0; k < np; k++) pillAt.add(Math.round(1 + k * (np > 1 ? 5 / 3 : 0)));
+      const hi = frac(t * 0.05) * (n + 4) - 2;
+      for (let i = 0; i < n; i++) {
+        const f = n > 1 ? i / (n - 1) : 0;
+        const y = Y(lerp(P.top, P.bottom, Math.pow(f, P.spacing)));
+        const k = near(c, c.mx, y, 60 * u) * (0.4 + I);
+        const w = (P.wBot + (P.wTop - P.wBot) * Math.pow(1 - f, P.taper)) * u
+          * (1 + 0.05 * P.breathe * mo * Math.sin(t * 0.45 + i * 0.7) + 0.08 * k) * c.introAt(0.05 * i);
+        const glow = 1 + P.sweep * mo * 1.4 * gauss((i - hi) / 1.2) + 0.8 * k;
+        const base = lerp(1, 0.45, f) * glow;
+        const cx = X(0);
+        const af = (s, x) => { const q = clamp((x - cx) / w + 0.5, 0, 1); return base * (1 - P.fade + P.fade * Math.pow(Math.sin(Math.PI * q), 0.7)); };
+        pen.el(i);
+        if (pillAt.has(i) && P.pillH > 0) outline(pen, rrPath(cx, y, w, P.pillH * u, P.pillH * u / 2), 0, af);
+        else pen.poly(Math.max(24, (w / 20) | 0), (s, o) => { o.x = cx - w / 2 + w * s; o.y = y; o.a = af(s, o.x); });
+      }
+    },
+  },
+
+  structured: {
+    label: 'Structured Products',
+    family: 'Structured Products',
+    group: 'Use cases',
+    blurb: 'Rounded panels packed into one structure, like tranches of a product. A highlight passes from panel to panel and the panel under the cursor lifts toward the viewer.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.62, y: 0.42, s: 0.62 } },
+    params: {
+      gap: p(13, 0, 60, 1, 'Gap'),
+      radius: p(10, 0, 60, 1, 'Corner radius'),
+      light: p(135, 0, 360, 1, 'Light angle'),
+      contrast: p(0.5, 0, 1, 0.01, 'Light contrast'),
+      lift: p(1, 0, 3, 0.05, 'Cursor lift'),
+      drift: p(1, 0, 4, 0.05, 'Depth drift'),
+      pass: p(1, 0, 3, 0.05, 'Highlight pass'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), g = (P.gap - 13) / 2;
+      const hi = frac(t * 0.03) * (PANELS.length + 3) - 1.5;
+      PANELS.forEach(([l, tp, r, b], i) => {
+        const x0 = X(l - 800 - g), x1 = X(r - 800 + g), y0 = Y(tp - 450 - g), y1 = Y(b - 450 + g);
+        const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+        if (w < 2 || h < 2 || offView(c, cx, cy, w / 2, h / 2)) return;
+        const k = c.md * c.mouseAmt * (Math.abs(c.mx - cx) < w / 2 && Math.abs(c.my - cy) < h / 2 ? 1 : 0.15 * near(c, cx, cy, 400 * u));
+        const z = P.lift * (0.3 + I) * k * 90 * u + P.drift * mo * Math.sin(t * 0.35 + sd(st, i) * TAU) * 40 * u;
+        const base = (0.6 + 0.4 * sd(st, i, 3)) * (1 + P.pass * mo * 1.3 * gauss((i - hi) / 0.9) + 0.5 * k) * c.introAt(0.06 * i);
+        pen.el(i);
+        outline(pen, rrPath(cx, cy, w, h, P.radius * u), z, rim(base, P.light, P.contrast));
+      });
+    },
+  },
+
+  optimization: {
+    label: 'Collateral Optimization',
+    family: 'Collateral Optimization',
+    group: 'Use cases',
+    blurb: 'Columns of tiles that grow toward the center, where the best fit sits. The columns rise and settle like an allocation being tuned, and tiles near the cursor lift.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 0.5 } },
+    params: {
+      sides: p(4, 1, 10, 1, 'Columns per side'),
+      sEdge: p(80, 10, 300, 1, 'Edge tile size'),
+      sStep: p(25, -40, 100, 1, 'Size step'),
+      sCenter: p(232, 20, 500, 1, 'Center tile size'),
+      gapX: p(56, 0, 200, 1, 'Column gap'),
+      gapY: p(14, 0, 100, 1, 'Row gap'),
+      topEdge: p(-192, -600, 600, 1, 'Edge column top'),
+      topCenter: p(232, -600, 600, 1, 'Center column top'),
+      radius: p(12, 0, 60, 1, 'Corner radius'),
+      rise: p(1, 0, 4, 0.05, 'Rise and settle'),
+      lens: p(1, 0, 3, 0.05, 'Cursor lift'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), K = Math.round(P.sides);
+      const cols = [];
+      for (let k = 0; k <= K; k++) cols.push({ size: k === K ? P.sCenter : P.sEdge + k * P.sStep, top: lerp(P.topEdge, P.topCenter, sstep(0, 1, k / K)), k });
+      // x of each column, from the center outward
+      let x = 0; const at = { [K]: 0 };
+      for (let k = K - 1; k >= 0; k--) { x += (cols[k + 1].size + cols[k].size) / 2 + P.gapX; at[k] = x; }
+      let id = 0;
+      for (const col of cols) {
+        const sides = col.k === K ? [0] : [-1, 1];
+        for (const sg of sides) {
+          const cxA = sg * at[col.k];
+          const off = P.rise * mo * 26 * Math.sin(t * 0.4 + col.k * 0.9 + (sg < 0 ? 0.6 : 0));
+          for (let r = 0; r < 40; r++) {
+            const yA = col.top + col.size / 2 + r * (col.size + P.gapY) + off;
+            const cx = X(cxA), cy = Y(yA), s = col.size * u;
+            if (cy + s / 2 < -H / 2 - 4) break;
+            if (offView(c, cx, cy, s / 2, s / 2)) continue;
+            const k = near(c, cx, cy, 160 * u);
+            const z = P.lens * (0.3 + I) * k * 120 * u;
+            const base = (0.5 + 0.5 * sd(st, r, col.k * 2 + (sg > 0))) * (1 - 0.35 * clamp(r / 6, 0, 1)) * (1 + k) * c.introAt(0.05 * (K - col.k) + 0.03 * r);
+            pen.el(id++, (r + col.k) & 1);
+            outline(pen, rrPath(cx, cy, s, s, P.radius * u), z, rim(base, 120, 0.5));
+          }
+        }
+      }
+    },
+  },
+
+  financing: {
+    label: 'Financing',
+    family: 'Financing',
+    group: 'Use cases',
+    blurb: 'A grid of parallelograms that leans further row by row, like terms extending. A slow shear wave runs across the grid and shapes near the cursor stand up straight.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 1.05 } },
+    params: {
+      rows: p(4, 1, 10, 1, 'Rows'),
+      cols: p(6, 1, 16, 1, 'Columns'),
+      w: p(190, 20, 500, 1, 'Width'),
+      h: p(194, 20, 500, 1, 'Height'),
+      pitchX: p(208, 20, 600, 1, 'Column pitch'),
+      pitchY: p(208, 20, 600, 1, 'Row pitch'),
+      slant0: p(44, -400, 400, 1, 'Top row lean'),
+      slantStep: p(43.3, -200, 200, 0.1, 'Lean per row'),
+      fade: p(0.5, 0, 1, 0.01, 'Lower row fade'),
+      shear: p(1, 0, 4, 0.05, 'Shear wave'),
+      straighten: p(1, 0, 3, 0.05, 'Cursor straighten'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      const R = Math.round(P.rows), C = Math.round(P.cols);
+      for (let r = 0; r < R; r++) {
+        const yA = (r - (R - 1) / 2) * P.pitchY;
+        for (let j = 0; j < C; j++) {
+          const xA = (j - (C - 1) / 2) * P.pitchX;
+          const cx = X(xA), cy = Y(yA);
+          const k = near(c, cx, cy, 170 * u);
+          let sl = P.slant0 + r * P.slantStep + P.shear * mo * 30 * Math.sin(t * 0.35 + j * 0.55 - r * 0.4);
+          sl *= 1 - 0.85 * clamp(P.straighten * (0.4 + I) * k, 0, 1);
+          const hw = P.w / 2 * u, hh = P.h / 2 * u, d = sl / 2 * u;
+          if (offView(c, cx, cy, hw + Math.abs(d), hh)) continue;
+          const base = (1 - P.fade * (R > 1 ? r / (R - 1) : 0)) * (0.65 + 0.35 * sd(st, r, j)) * (1 + 0.8 * k) * c.introAt(0.05 * (r + j));
+          // top edge leans right by the slant: the shapes read as "/"
+          const pts = [cx + hw + d, cy + hh, cx - hw + d, cy + hh, cx - hw - d, cy - hh, cx + hw - d, cy - hh];
+          pen.el(r * C + j, (r + j) & 1);
+          outline(pen, pts, k * 60 * u, (s, x) => base * (0.45 + 0.55 * sstep(-1.2, 1, (x - cx) / (hw + Math.abs(d)))));
+        }
+      }
+    },
+  },
+
+  repo: {
+    base: 'tiles',
+    label: 'Repo',
+    family: 'Repo',
+    group: 'Use cases',
+    blurb: 'Rows split by one rule, each with a half circle where cash meets collateral. Rows lift under the cursor and a slow depth wave runs through the field.',
+    layout: { wide: { x: 0.495, y: 0.5, s: 1 }, tall: { x: 0.495, y: 0.5, s: 0.96 } },
+    defaults: { shape: 2, cols: 1, pitchX: 300, pitchY: 240, h: 240, rules: 0.8, alt: 0, stagger: 0, lens: 1.4, wave: 0.2 },
+  },
+
+  liquidity: {
+    label: 'Trading & Liquidity',
+    family: 'Trading & Liquidity',
+    group: 'Use cases',
+    blurb: 'Two columns of long lanes that interleave, like orders on both sides of a book. The lanes slide past each other, light runs along them and lanes near the cursor brighten.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 0.85 } },
+    params: {
+      rows: p(12, 2, 40, 1, 'Lanes'),
+      pitch: p(64, 10, 200, 1, 'Lane pitch'),
+      len: p(1221, 100, 3000, 1, 'Lane length'),
+      h: p(24, 0, 80, 1, 'Lane height'),
+      offset: p(335.5, 0, 1200, 0.5, 'Column offset'),
+      fade: p(0.85, 0, 1, 0.01, 'Outer fade'),
+      slide: p(1, 0, 4, 0.05, 'Slide'),
+      run: p(1, 0, 3, 0.05, 'Light run'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.rows);
+      for (let i = 0; i < n; i++) {
+        const right = (i & 1) === 0, sg = right ? 1 : -1;
+        const y = Y((i - (n - 1) / 2) * P.pitch);
+        const k = near(c, c.mx, y, P.pitch * 0.9 * u);
+        const L = P.len * u * c.introAt(0.04 * i);
+        const cx = X(sg * P.offset) - sg * (P.len * u - L) / 2 + sg * P.slide * mo * 60 * u * Math.sin(t * 0.3 + sd(st, i) * TAU) + (c.mx - X(sg * P.offset)) * 0.04 * k;
+        const inner = cx - sg * L / 2; // the end that faces the center
+        const head = frac(t * 0.06 + sd(st, i, 1));
+        const base = (0.6 + 0.4 * sd(st, i, 2)) * (1 + 0.9 * k);
+        const af = (s, x) => {
+          const q = clamp(sg * (x - inner) / L, 0, 1);
+          return base * (1 - P.fade * q + P.run * mo * 1.2 * gauss((q - head) / 0.05));
+        };
+        pen.el(i, right);
+        if (P.h > 0.5) outline(pen, rrPath(cx, y, L, P.h * u, P.h * u / 2), 0, af);
+        else pen.poly(40, (s, o) => { o.x = cx - L / 2 + L * s; o.y = y; o.a = af(s, o.x); });
+      }
+    },
+  },
+
+  assets: {
+    label: 'Asset Managers',
+    family: 'Asset Managers',
+    group: 'Institutions',
+    blurb: 'A row of arrowheads that grows step by step, like assets compounding. A pulse of momentum moves through the row and the arrowheads near the cursor reach toward it.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1.25 }, tall: SPLIT },
+    params: {
+      count: p(6, 2, 16, 1, 'Arrowheads'),
+      pitch: p(95.3, 20, 300, 0.1, 'Pitch'),
+      w0: p(50, 5, 300, 1, 'First width'),
+      wStep: p(9.07, -40, 60, 0.01, 'Width step'),
+      h0: p(193, 10, 800, 1, 'First height'),
+      hStep: p(56.7, -100, 200, 0.1, 'Height step'),
+      x0: p(-286, -900, 900, 1, 'Start X'),
+      y: p(0, -600, 600, 0.5, 'Center Y'),
+      back: p(0.3, 0, 1, 0.01, 'Back edge'),
+      pulse: p(1, 0, 3, 0.05, 'Momentum pulse'),
+      reach: p(1, 0, 3, 0.05, 'Cursor reach'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
+      const head = frac(t * 0.06) * (n + 3) - 1.5;
+      for (let i = 0; i < n; i++) {
+        const w = (P.w0 + i * P.wStep) * u, h = (P.h0 + i * P.hStep) * u * c.introAt(0.08 * i);
+        const xl = X(P.x0 + i * P.pitch) + P.pulse * mo * 12 * u * gauss((i - head) / 1.1), cy = Y(P.y);
+        const k = near(c, xl + w, cy, 160 * u);
+        const tip = xl + w * (1 + 0.25 * P.reach * (0.4 + I) * k);
+        const glow = 1 + P.pulse * mo * 1.5 * gauss((i - head) / 1.1) + 0.8 * k;
+        const base = lerp(0.55, 1, n > 1 ? i / (n - 1) : 1) * glow;
+        pen.el(i);
+        outline(pen, [tip, cy, xl, cy + h / 2, xl, cy - h / 2], 0, (s, x) => base * lerp(P.back, 1, clamp((x - xl) / Math.max(1, tip - xl) * 4, 0, 1)));
+      }
+    },
+  },
+
+  treasurers: {
+    label: 'Corporate Treasurers',
+    family: 'Corporate Treasurers',
+    group: 'Institutions',
+    blurb: 'A grid of rounded cells that widen to the right and deepen downward, like balances building up. A slow ripple of light crosses the grid and cells lift under the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      w0: p(64, 8, 300, 1, 'First column width'),
+      wStep: p(14, -20, 80, 0.5, 'Width step'),
+      h0: p(40, 8, 300, 1, 'First row height'),
+      hGrow: p(1.185, 0.8, 1.6, 0.005, 'Row growth'),
+      gap: p(8, 0, 60, 1, 'Gap'),
+      ox: p(-9, -400, 400, 1, 'Left inset'),
+      oy: p(-58, -400, 400, 1, 'Top inset'),
+      radius: p(8, 0, 60, 1, 'Corner radius'),
+      ripple: p(1, 0, 3, 0.05, 'Light ripple'),
+      lens: p(1, 0, 3, 0.05, 'Cursor lift'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, mo = wake(t) * (0.3 + I);
+      let x = c.ax - W / 2 + P.ox * u;
+      for (let j = 0; j < 80 && x < W / 2 + 4; j++) {
+        const w = Math.max(2, P.w0 + j * P.wStep) * u;
+        let y = c.ay + H / 2 - P.oy * u, h = P.h0 * u;
+        for (let i = 0; i < 80 && y > -H / 2 - 4; i++) {
+          const cx = x + w / 2, cy = y - h / 2;
+          if (!offView(c, cx, cy, w / 2, h / 2)) {
+            const k = near(c, cx, cy, 150 * u);
+            const wave = Math.sin((cx + cy) / (260 * u) - t * 0.6);
+            const base = (0.45 + 0.55 * sd(st, i, j)) * (1 + P.ripple * mo * 0.6 * wave + k) * c.introAt(0.03 * (i + j));
+            pen.el(j * 80 + i, (i + j) & 1);
+            outline(pen, rrPath(cx, cy, w, h, P.radius * u), P.lens * (0.3 + I) * k * 110 * u, rim(base, 120, 0.45));
+          }
+          y -= h + P.gap * u; h *= P.hGrow;
+        }
+        x += w + P.gap * u;
+      }
+    },
+  },
+
+  custody: {
+    label: 'Custody & Collateral Settlement',
+    family: 'Custody & Collateral Settlement',
+    group: 'Institutions',
+    blurb: 'A lattice of rails with nodes that swell toward one secure center. Packets travel the rails between nodes, nodes pulse as they arrive and the center follows the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      pitch: p(191.6, 40, 500, 0.1, 'Pitch'),
+      ox: p(0, -500, 500, 1, 'Grid X'),
+      oy: p(0, -500, 500, 1, 'Grid Y'),
+      rows: p(4, 0, 20, 1, 'Rows of cells (0 fills)'),
+      fx: p(0, -900, 900, 1, 'Center X'),
+      fy: p(-95.5, -900, 900, 1, 'Center Y'),
+      sMax: p(78, 4, 200, 1, 'Center node'),
+      sMin: p(28, 0, 120, 1, 'Outer node'),
+      reach: p(1.25, 0.2, 5, 0.05, 'Swell reach'),
+      rails: p(0.8, 0, 1.5, 0.01, 'Rail strength'),
+      packets: p(1, 0, 3, 0.05, 'Packets'),
+      follow: p(1, 0, 3, 0.05, 'Cursor follow'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), pi = P.pitch * u;
+      const lean = P.follow * c.md * c.mouseAmt * (0.3 + I);
+      const fx = X(P.fx) + (c.mx - X(P.fx)) * 0.5 * lean, fy = Y(P.fy) + (c.my - Y(P.fy)) * 0.5 * lean;
+      const gx = X(P.ox), gy = Y(P.oy);
+      const j0 = Math.floor((-W / 2 - gx) / pi) - 1, j1 = Math.ceil((W / 2 - gx) / pi) + 1;
+      const rH = Math.round(P.rows) / 2;
+      const i0 = rH ? -Math.floor(rH) : Math.floor((gy - H / 2) / pi) - 1, i1 = rH ? Math.floor(rH) : Math.ceil((gy + H / 2) / pi) + 1;
+      const size = (x, y) => (P.sMin + (P.sMax - P.sMin) * gauss(Math.hypot(x - fx, y - fy) / (pi * P.reach))) * u;
+      const gi = c.introAt(0);
+      // rails: each one runs between two neighboring nodes and stops at their outlines
+      pen.el(-1);
+      const rail = (x0, y0, x1, y1, r0, r1, key) => {
+        const L = Math.hypot(x1 - x0, y1 - y0), a0 = r0 / 2 / L, a1 = 1 - r1 / 2 / L;
+        if (a1 <= a0) return;
+        const head = frac(t * 0.08 * (0.8 + 0.4 * sd(st, key)) + sd(st, key, 5));
+        const on = sd(st, key, 9) < 0.35;
+        pen.poly(12, (s, o) => {
+          const f = lerp(a0, a1, s);
+          o.x = lerp(x0, x1, f); o.y = lerp(y0, y1, f);
+          o.a = P.rails * gi * (0.55 + (on ? P.packets * mo * 2 * gauss((f - head) / 0.06) : 0));
+        });
+      };
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+        const x = gx + j * pi, y = gy - i * pi, r = size(x, y);
+        if (j < j1) { const x2 = x + pi; rail(x, y, x2, y, r, size(x2, y), i * 97 + j); }
+        if (i < i1) { const y2 = y - pi; rail(x, y, x, y2, r, size(x, y2), i * 89 + j * 7 + 500); }
+      }
+      let id = 0;
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+        const x = gx + j * pi, y = gy - i * pi, d = size(x, y);
+        if (offView(c, x, y, d / 2, d / 2)) continue;
+        const pulse = 1 + P.packets * mo * 0.8 * Math.pow(0.5 + 0.5 * Math.sin(t * 0.9 + sd(st, i, j) * TAU), 6);
+        pen.el(id++);
+        ring(pen, x, y, d * (1 + 0.04 * (pulse - 1)), 0, rim((0.75 + 0.25 * sd(st, j, i)) * pulse * gi, 110, 0.4));
+      }
+    },
+  },
+
+  banks: {
+    label: 'Banks',
+    family: 'Banks',
+    group: 'Institutions',
+    blurb: 'A cascade of large rounded squares stepping down and to the left, like balance sheets stacked in depth. The stack fans in and out, light traces each edge and the stack leans toward the cursor.',
+    layout: { wide: { x: 0.62, y: 0.42, s: 0.9 }, tall: SPLIT },
+    params: {
+      count: p(4, 1, 12, 1, 'Squares'),
+      size: p(656, 50, 1600, 1, 'Size'),
+      radius: p(24, 0, 200, 1, 'Corner radius'),
+      x: p(217, -900, 900, 1, 'Front X'),
+      y: p(-71, -900, 900, 1, 'Front Y'),
+      stepX: p(-136, -400, 400, 1, 'Step X'),
+      stepY: p(136, -400, 400, 1, 'Step Y'),
+      depth: p(60, 0, 400, 5, 'Depth'),
+      light: p(0.8, 0, 1, 0.01, 'Edge light'),
+      fan: p(1, 0, 4, 0.05, 'Fan'),
+      trace: p(1, 0, 3, 0.05, 'Light trace'),
+      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
+      const fan = 1 + 0.12 * P.fan * mo * Math.sin(t * 0.3);
+      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
+      for (let k = 0; k < n; k++) {
+        const s = P.size * u, f = n > 1 ? k / (n - 1) : 0;
+        const cx = X(P.x + k * P.stepX * fan) + c.mn.x * lean * 30 * u * k, cy = Y(P.y + k * P.stepY * fan) + c.mn.y * lean * 30 * u * k;
+        const base = lerp(1, 0.55, f) * c.introAt(0.15 * k);
+        const head = frac(t * 0.04 + sd(st, k));
+        pen.el(k);
+        outline(pen, rrPath(cx, cy, s, s, P.radius * u), -k * P.depth * u, (q, x, y) => {
+          const lit = sstep(-0.7, 0.5, ((y - cy) - 0.5 * (x - cx)) / s);
+          const d = Math.abs(q - head), glint = gauss(Math.min(d, 1 - d) / 0.04);
+          return base * (1 - P.light + P.light * lit + P.trace * mo * glint);
+        });
+      }
+    },
+  },
+
+  prime: {
+    label: 'Prime Brokers',
+    family: 'Prime Brokers',
+    group: 'Institutions',
+    blurb: 'Lines that leave one narrow source and fan out across the frame, like access spreading from a prime broker. Pulses run down the lines, the fan sways and its spread follows the cursor.',
+    layout: { wide: { x: 0.5, y: 0.56, s: 1.3 }, tall: SPLIT },
+    params: {
+      perSide: p(9, 1, 40, 1, 'Lines per side'),
+      topGap: p(19.5, 0, 100, 0.1, 'Top spacing'),
+      botGap: p(51.25, 0, 300, 0.05, 'Bottom spacing'),
+      cross: p(2, -60, 60, 0.5, 'Center cross'),
+      botCenter: p(38, -200, 200, 1, 'Bottom center gap'),
+      top: p(-214, -900, 900, 1, 'Top Y'),
+      bottom: p(630, -900, 1400, 1, 'Bottom Y'),
+      bend: p(1.35, 0.5, 3, 0.01, 'Flare'),
+      fadeIn: p(0.25, 0, 1, 0.01, 'Top fade'),
+      sway: p(1, 0, 4, 0.05, 'Sway'),
+      pulses: p(1, 0, 3, 0.05, 'Pulses'),
+      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.perSide);
+      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
+      const sway = P.sway * mo * 40 * Math.sin(t * 0.25) + c.mn.x * lean * 120;
+      let id = 0;
+      for (const sg of [-1, 1]) for (let j = 0; j < n; j++) {
+        const xt = sg * (P.topGap * j - P.cross), xb = sg * (P.botGap * j + P.botCenter) * (1 + 0.15 * c.mn.x * sg * lean) + sway;
+        const head = frac(t * 0.07 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg));
+        const base = 0.7 + 0.3 * sd(st, j, sg + 4), grow = c.introAt(0.04 * j);
+        pen.el(id++);
+        pen.poly(40, (s, o) => {
+          const q = s * grow;
+          o.x = X(lerp(xt, xb, Math.pow(q, P.bend))); o.y = Y(lerp(P.top, P.bottom, q));
+          o.a = base * sstep(0, Math.max(0.001, P.fadeIn), q) * (0.85 + P.pulses * mo * 1.6 * gauss((q - head) / 0.04));
+        });
+      }
+    },
+  },
+
+  exchanges: {
+    base: 'dots',
+    label: 'Exchanges & Trading Venue',
+    family: 'Exchanges & Trading Venue',
+    group: 'Institutions',
+    blurb: 'A staggered field of rings that swells toward the center like a crowded venue. The swell drifts, rings shimmer as they quote and the swell follows the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    defaults: { pitchX: 84, pitchY: 84.5, stagger: 0, ox: 42, oy: 40, size: 104, profile: 0, floor: 0.3, reach: 400, light: 225, contrast: 0.45 },
+  },
+
+  dots: {
+    label: 'Ring Field',
+    family: 'Exchanges, Market Makers, Collateral Management',
+    group: 'Institutions',
+    hidden: true,
+    blurb: 'A field of rings whose size follows a swell or a ramp.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      pitchX: p(84, 10, 300, 0.5, 'Column pitch'),
+      pitchY: p(84.5, 10, 300, 0.5, 'Row pitch'),
+      stagger: p(0.5, 0, 1, 0.01, 'Stagger'),
+      ox: p(278, -600, 600, 0.5, 'Grid X'),
+      oy: p(40, -600, 600, 0.5, 'Grid Y'),
+      size: p(104, 2, 300, 1, 'Ring size'),
+      profile: p(0, 0, 2, 1, 'Size profile', { options: { Swell: 0, Ramp: 1, Even: 2 } }),
+      floor: p(0.3, 0, 1, 0.01, 'Smallest share'),
+      reach: p(400, 50, 2000, 5, 'Swell reach'),
+      cx: p(0, -900, 900, 1, 'Swell X'),
+      cy: p(0, -900, 900, 1, 'Swell Y'),
+      rampY: p(21, -900, 900, 1, 'Ramp middle Y'),
+      rampSpan: p(660, 50, 2000, 5, 'Ramp length'),
+      rampTilt: p(0.3, -2, 2, 0.01, 'Ramp tilt'),
+      light: p(225, 0, 360, 1, 'Light angle'),
+      contrast: p(0.45, 0, 1, 0.01, 'Light contrast'),
+      shimmer: p(1, 0, 3, 0.05, 'Shimmer'),
+      drift: p(1, 0, 4, 0.05, 'Swell drift'),
+      follow: p(1, 0, 3, 0.05, 'Cursor follow'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      const px = P.pitchX * u, py = P.pitchY * u, mode = Math.round(P.profile);
+      const lean = P.follow * c.md * c.mouseAmt * (0.3 + I);
+      const sx = X(P.cx) + P.drift * mo * 60 * u * Math.sin(t * 0.2) + (c.mx - X(P.cx)) * 0.6 * lean;
+      const sy = Y(P.cy) + P.drift * mo * 40 * u * Math.cos(t * 0.17) + (c.my - Y(P.cy)) * 0.6 * lean;
+      const gx = X(P.ox), gy = Y(P.oy), dMax = P.size * u;
+      const i0 = Math.floor((-H / 2 - dMax - gy) / py) - 1, i1 = Math.ceil((H / 2 + dMax - gy) / py) + 1;
+      let id = 0;
+      for (let i = i0; i <= i1; i++) {
+        const oy = gy + i * py, sh = (i & 1) ? P.stagger * px : 0;
+        const j0 = Math.floor((-W / 2 - dMax - gx - sh) / px) - 1, j1 = Math.ceil((W / 2 + dMax - gx - sh) / px) + 1;
+        for (let j = j0; j <= j1; j++) {
+          const x = gx + sh + j * px, y = oy;
+          let f;
+          if (mode === 0) {
+            const R = P.reach * u;
+            const g = (d) => P.floor + (1 - P.floor) * gauss(d / R);
+            f = g(x - sx) * g(y - sy);
+          } else if (mode === 1) {
+            const xa = (x - c.ax) / u, ya = (c.ay - y) / u;
+            f = P.floor + (1 - P.floor) * sstep(0, 1, (ya - P.rampY - P.rampTilt * xa) / P.rampSpan + 0.5);
+            const k = near(c, x, y, 140 * u) * lean; f = Math.min(1, f + 0.4 * k);
+          } else f = 1;
+          const shim = 1 + P.shimmer * mo * 0.06 * Math.sin(t * 0.8 + sd(st, i, j) * TAU);
+          const d = dMax * f * shim * c.introAt(0.02 * Math.abs(i) + 0.02 * Math.abs(j));
+          if (d < 1 || offView(c, x, y, d / 2, d / 2)) continue;
+          const base = (0.6 + 0.4 * sd(st, j, i)) * (1 + P.shimmer * mo * 0.5 * Math.max(0, Math.sin(t * 0.5 + sd(st, i, j + 7) * TAU)));
+          pen.el(id++, (i + j) & 1);
+          ring(pen, x, y, d, 0, rim(base, P.light, P.contrast));
+        }
+      }
+    },
+  },
+
+  hedge: {
+    label: 'Hedge Funds & Trading Firms',
+    family: 'Hedge Funds & Trading Firms',
+    group: 'Institutions',
+    blurb: 'Columns that climb from the floor on one side and hang from the ceiling on the other, like long and short books meeting. The columns rise and fall in turn and the ones near the cursor stretch toward it.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1.3 }, tall: SPLIT },
+    params: {
+      scaleW: p(1, 0.2, 4, 0.01, 'Width scale'),
+      spread: p(1, 0.3, 3, 0.01, 'Spread'),
+      radius: p(0, 0, 40, 1, 'Corner radius'),
+      light: p(100, 0, 360, 1, 'Light angle'),
+      swing: p(1, 0, 4, 0.05, 'Rise and fall'),
+      stretch: p(1, 0, 3, 0.05, 'Cursor stretch'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      HEDGE.forEach(([xc, w, top, bot], i) => {
+        const up = bot === 774; // climbs from the floor; otherwise hangs from the ceiling
+        const x = X((xc - 320) * P.spread);
+        const k = near(c, x, c.my, 60 * u) * P.stretch * (0.4 + I);
+        const swing = P.swing * mo * 30 * Math.sin(t * 0.35 + i * 0.6);
+        let y0 = top - 480, y1 = bot - 480;
+        if (up) y0 -= swing + k * 60; else y1 += swing + k * 60;
+        const g = c.introAt(0.05 * i);
+        if (up) y0 = lerp(y1, y0, g); else y1 = lerp(y0, y1, g);
+        const wy0 = Y(y0), wy1 = Y(y1);
+        const h = Math.abs(wy1 - wy0), cy = (wy0 + wy1) / 2, ww = w * P.scaleW * u;
+        if (h < 1) return;
+        pen.el(i, up);
+        outline(pen, rrPath(x, cy, ww, h, P.radius * u), 0, rim((0.65 + 0.35 * sd(st, i)) * (1 + 0.7 * k), P.light, 0.5));
+      });
+    },
+  },
+
+  makers: {
+    base: 'dots',
+    label: 'Market Makers',
+    family: 'Market Makers',
+    group: 'Institutions',
+    blurb: 'An even, staggered field of rings, like quotes posted on both sides. Rings shimmer as they update and the field brightens around the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    defaults: { pitchX: 83, pitchY: 83, stagger: 0.5, ox: 42.5, oy: -455.5, size: 63, profile: 2, light: 160, contrast: 0.6 },
+  },
+
+  otc: {
+    label: 'OTC Desks',
+    family: 'OTC Desks',
+    group: 'Institutions',
+    blurb: 'A row of tall rounded columns whose tops trace an uneven skyline, like negotiated prices. The skyline ripples slowly and columns near the cursor rise to meet it.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 0.95 }, tall: SPLIT },
+    params: {
+      pitch: p(32.6, 6, 120, 0.1, 'Pitch'),
+      w: p(19, 1, 80, 0.5, 'Column width'),
+      x0: p(-603.7, -2000, 600, 0.5, 'First column X'),
+      relief: p(1, 0, 3, 0.01, 'Skyline relief'),
+      lift: p(0, -600, 600, 1, 'Skyline Y'),
+      fade: p(0.7, 0, 1, 0.01, 'Downward fade'),
+      ripple: p(1, 0, 4, 0.05, 'Ripple'),
+      rise: p(1, 0, 3, 0.05, 'Cursor rise'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), m = OTC_TOPS.length;
+      const mean = OTC_TOPS.reduce((a, b) => a + b, 0) / m;
+      const j0 = Math.floor((-W / 2 / u - c.ax / u - P.x0) / P.pitch) - 1, j1 = Math.ceil((W / 2 / u - c.ax / u - P.x0) / P.pitch) + 1;
+      const bottom = -H / 2 - 20;
+      for (let j = j0; j <= j1; j++) {
+        const q = ((j % (2 * m)) + 2 * m) % (2 * m), top0 = OTC_TOPS[q < m ? q : 2 * m - 1 - q];
+        const x = X(P.x0 + j * P.pitch);
+        const k = near(c, x, c.my, 70 * u) * P.rise * (0.4 + I);
+        const ty = mean + (top0 - mean) * P.relief - 480 + P.lift - P.ripple * mo * 18 * Math.sin(t * 0.4 + j * 0.35) - k * 70;
+        const yTop = Y(ty) * c.introAt(0.01 * Math.abs(j)) + bottom * (1 - c.introAt(0.01 * Math.abs(j)));
+        const h = yTop - bottom, w = P.w * u;
+        if (h < w || Math.abs(x) - w > W / 2 + 4) continue;
+        const base = (0.6 + 0.4 * sd(st, j)) * (1 + 0.7 * k);
+        pen.el(j, j & 1);
+        outline(pen, rrPath(x, (yTop + bottom) / 2, w, h, w / 2), 0, (s, xx, y) => base * (1 - P.fade * clamp((yTop - y) / (H * 0.6), 0, 1)));
+      }
+    },
+  },
+
+  leadership: {
+    label: 'Leadership',
+    family: 'Leadership',
+    group: 'Roles',
+    blurb: 'Nested arcs that rise into one crest, layer over layer. The arcs breathe, light runs over the crest and the arcs lift toward the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      count: p(24, 2, 60, 1, 'Arcs'),
+      first: p(-109, -900, 900, 1, 'First arc end Y'),
+      step: p(27.5, 2, 120, 0.1, 'End spacing'),
+      h0: p(184, 0, 800, 1, 'First arc height'),
+      decay: p(0.918, 0.7, 1.2, 0.001, 'Height decay'),
+      cx: p(0, -900, 900, 1, 'Crest X'),
+      half: p(440, 100, 2000, 1, 'Half width'),
+      fade: p(0.45, 0, 1, 0.01, 'Lower fade'),
+      breathe: p(1, 0, 4, 0.05, 'Breathe'),
+      run: p(1, 0, 3, 0.05, 'Light run'),
+      lift: p(1, 0, 3, 0.05, 'Cursor lift'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
+      const hx = Math.max(W / 2 / u + 20, P.half); // the crest always spans the frame
+      for (let i = 0; i < n; i++) {
+        const end = P.first + i * P.step;
+        const h = P.h0 * Math.pow(P.decay, i) * (1 + 0.08 * P.breathe * mo * Math.sin(t * 0.4 - i * 0.25)) * c.introAt(0.03 * i);
+        const head = frac(t * 0.05 + sd(st, i));
+        const base = lerp(0.95, 1 - P.fade, n > 1 ? i / (n - 1) : 0);
+        pen.el(i);
+        pen.poly(80, (s, o) => {
+          const xa = P.cx + (s * 2 - 1) * hx, q = (xa - P.cx) / hx;
+          o.x = X(xa);
+          const k = near(c, o.x, Y(end - h), 220 * u) * P.lift * (0.3 + I);
+          o.y = Y(end - h * (1 - q * q) - k * 25);
+          o.a = base * (1 - sstep(0.9, 1, Math.abs(s * 2 - 1))) * (1 + P.run * mo * 1.3 * gauss((s - head) / 0.04) + 0.6 * k);
+        });
+      }
+    },
+  },
+
+  legal: {
+    label: 'Legal',
+    family: 'Legal',
+    group: 'Roles',
+    blurb: 'Bars that interlock in a pinwheel weave, like clauses that hold each other in place. The weave shimmers, bars slide gently along their length and bars near the cursor lift.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      unit: p(150.5, 30, 400, 0.5, 'Weave unit'),
+      len: p(205, 10, 600, 1, 'Bar length'),
+      w: p(66, 4, 300, 1, 'Bar width'),
+      radius: p(8, 0, 100, 1, 'Corner radius'),
+      hx: p(0, -600, 600, 0.5, 'Weave X'),
+      hy: p(0, -600, 600, 0.5, 'Weave Y'),
+      light: p(120, 0, 360, 1, 'Light angle'),
+      contrast: p(0.45, 0, 1, 0.01, 'Light contrast'),
+      slide: p(1, 0, 4, 0.05, 'Slide'),
+      lens: p(1, 0, 3, 0.05, 'Cursor lift'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), q = P.unit;
+      // horizontal bars: x = hx + 2q·j + q·(i odd), y = hy + q·i; vertical bars sit on the same lattice, rotated
+      const vx = P.hx, vy = P.hy + q;
+      const Wa = W / 2 / u + P.len, Ha = H / 2 / u + P.len;
+      const ox = -c.ax / u, oy = c.ay / u;
+      let id = 0;
+      const bar = (xa, ya, horiz, key) => {
+        const sl = P.slide * mo * 10 * Math.sin(t * 0.4 + sd(st, key) * TAU);
+        const x = X(xa + (horiz ? sl : 0)), y = Y(ya + (horiz ? 0 : sl));
+        const bw = (horiz ? P.len : P.w) * u, bh = (horiz ? P.w : P.len) * u;
+        if (offView(c, x, y, bw / 2, bh / 2)) return;
+        const k = near(c, x, y, 150 * u);
+        const base = (0.55 + 0.45 * sd(st, key, 3)) * (1 + k) * c.introAt(0.1 * sd(st, key, 7));
+        pen.el(id++, horiz);
+        outline(pen, rrPath(x, y, bw, bh, P.radius * u), P.lens * (0.3 + I) * k * 100 * u, rim(base, P.light, P.contrast));
+      };
+      const iA = Math.floor((oy - Ha - P.hy) / q), iB = Math.ceil((oy + Ha - P.hy) / q);
+      for (let i = iA; i <= iB; i++) {
+        const sh = (i & 1) ? q : 0;
+        const jA = Math.floor((ox - Wa - P.hx - sh) / (2 * q)), jB = Math.ceil((ox + Wa - P.hx - sh) / (2 * q));
+        for (let j = jA; j <= jB; j++) bar(P.hx + sh + 2 * q * j, P.hy + q * i, true, i * 53 + j);
+      }
+      const jA = Math.floor((ox - Wa - vx) / q), jB = Math.ceil((ox + Wa - vx) / q);
+      for (let j = jA; j <= jB; j++) {
+        const sh = (j & 1) ? q : 0;
+        const iA2 = Math.floor((oy - Ha - vy - sh) / (2 * q)), iB2 = Math.ceil((oy + Ha - vy - sh) / (2 * q));
+        for (let i = iA2; i <= iB2; i++) bar(vx + q * j, vy + sh + 2 * q * i, false, j * 59 + i + 700);
+      }
+    },
+  },
+
+  risk: {
+    label: 'Risk',
+    family: 'Risk',
+    group: 'Roles',
+    blurb: 'Many lines gather from across the frame into one point, like exposures netting down. Light flows along the lines into the point, which sways and leans toward the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      count: p(40, 4, 120, 1, 'Lines'),
+      spread: p(948, 50, 2400, 1, 'Spread at left'),
+      px: p(503, -900, 1400, 1, 'Point X'),
+      py: p(45, -900, 900, 1, 'Point Y'),
+      ly: p(0, -900, 900, 1, 'Spread center Y'),
+      shape: p(1, 0.3, 3, 0.01, 'Gather curve'),
+      glow: p(0.85, 0, 1, 0.01, 'Point glow'),
+      sway: p(1, 0, 4, 0.05, 'Sway'),
+      flow: p(1, 0, 3, 0.05, 'Light flow'),
+      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
+      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
+      const pX = X(P.px) + (c.mx - X(P.px)) * 0.12 * lean;
+      const pY = Y(P.py + P.sway * mo * 30 * Math.sin(t * 0.3)) + (c.my - Y(P.py)) * 0.25 * lean;
+      const xL = Math.min(X(P.px - 988), -W / 2 - 10);
+      for (let i = 0; i < n; i++) {
+        const f = n > 1 ? i / (n - 1) : 0.5;
+        const yL = Y(P.ly + (f - 0.5) * P.spread);
+        const head = frac(t * 0.06 * (0.8 + 0.4 * sd(st, i)) + sd(st, i, 1));
+        const grow = c.introAt(0.01 * i);
+        pen.el(i);
+        pen.poly(60, (s, o) => {
+          const q = 1 - (1 - s) * grow;
+          o.x = lerp(xL, pX, q);
+          o.y = lerp(yL, pY, Math.pow(sstep(0, 1, q), P.shape));
+          o.a = (lerp(0.15, 1, Math.pow(q, 1.5 * P.glow + 0.2))) * (0.85 + P.flow * mo * 1.4 * gauss((q - head) / 0.04));
+        });
+      }
+    },
+  },
+
+  trading: {
+    label: 'Trading',
+    family: 'Trading',
+    group: 'Roles',
+    blurb: 'Rows of split lanes whose gaps line up into one arrow, like a trade cutting through the book. The arrow pushes forward and back, light runs along the lanes and rows near the cursor lean toward it.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      rows: p(17, 3, 60, 1, 'Rows'),
+      pitch: p(54, 10, 200, 1, 'Row pitch'),
+      h: p(26, 0, 80, 1, 'Lane height'),
+      gap: p(88, 0, 400, 1, 'Gap'),
+      tip: p(358, -900, 900, 1, 'Arrow tip X'),
+      step: p(100, -300, 300, 1, 'Step per row'),
+      fade: p(0.7, 0, 1, 0.01, 'Outer fade'),
+      push: p(1, 0, 4, 0.05, 'Push'),
+      run: p(1, 0, 3, 0.05, 'Light run'),
+      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.rows), mid = (n - 1) / 2;
+      const xl = -W / 2 - 30 * u, xr = W / 2 + 30 * u;
+      for (let i = 0; i < n; i++) {
+        const y = Y((i - mid) * P.pitch), d = Math.abs(i - mid);
+        const k = near(c, c.mx, y, P.pitch * u) * P.lean * (0.4 + I);
+        const split = X(P.tip - d * P.step + P.push * mo * 40 * Math.sin(t * 0.4 - d * 0.35)) + (c.mx - X(P.tip - d * P.step)) * 0.15 * k;
+        const a = split - P.gap * u / 2, b = split + P.gap * u / 2;
+        const head = frac(t * 0.05 + sd(st, i));
+        const base = (0.6 + 0.4 * sd(st, i, 1)) * (1 + 0.8 * k) * c.introAt(0.03 * d);
+        const lane = (x0, x1, odd, dir) => {
+          if (x1 - x0 < 2) return;
+          const L = x1 - x0, cx = (x0 + x1) / 2;
+          pen.el(i * 2 + odd, odd);
+          const af = (s, x) => { const q = clamp(dir > 0 ? (x - x0) / L : (x1 - x) / L, 0, 1); return base * (1 - P.fade * q + P.run * mo * gauss((q - head) / 0.05)); };
+          if (P.h > 0.5) outline(pen, rrPath(cx, y, L, P.h * u, P.h * u / 2), 0, af);
+          else pen.poly(30, (s, o) => { o.x = lerp(x0, x1, s); o.y = y; o.a = af(s, o.x); });
+        };
+        lane(xl, a, 0, -1); // fades toward the left edge
+        lane(b, xr, 1, 1);  // fades toward the right edge
+      }
+    },
+  },
+
+  lending: {
+    label: 'Lending',
+    family: 'Lending',
+    group: 'Roles',
+    blurb: 'Fine bars hang from the top and rise from the bottom, meeting along one S-curve, like a loan drawn down and repaid. The curve slides and breathes and bends toward the cursor.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      pitch: p(38, 6, 120, 0.5, 'Pitch'),
+      w: p(10, 1, 60, 0.5, 'Bar width'),
+      x0: p(29, -200, 200, 0.5, 'First bar X'),
+      offset: p(20, 0, 60, 0.5, 'Set offset'),
+      mid: p(8, -600, 600, 1, 'Curve middle Y'),
+      amp: p(295, 0, 900, 1, 'Curve height'),
+      span: p(720, 50, 3000, 5, 'Curve length'),
+      cx: p(10, -900, 900, 1, 'Curve X'),
+      overlap: p(6, -60, 60, 1, 'Overlap'),
+      fade: p(0.65, 0, 1, 0.01, 'Fade from curve'),
+      slide: p(1, 0, 4, 0.05, 'Slide'),
+      bend: p(1, 0, 3, 0.05, 'Cursor bend'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      const cx = P.cx + P.slide * mo * 60 * Math.sin(t * 0.25), amp = P.amp * (1 + 0.08 * P.slide * mo * Math.sin(t * 0.33));
+      const E = (xa) => P.mid + amp * (2 * sstep(0, 1, (xa - cx) / P.span + 0.5) - 1);
+      const topY = H / 2 + 30 * u, botY = -H / 2 - 30 * u, xa0 = (-W / 2 - c.ax) / u, xa1 = (W / 2 - c.ax) / u;
+      let id = 0;
+      for (const set of [0, 1]) {
+        const off = set ? P.x0 - P.offset : P.x0;
+        const j0 = Math.floor((xa0 - off) / P.pitch) - 1, j1 = Math.ceil((xa1 - off) / P.pitch) + 1;
+        for (let j = j0; j <= j1; j++) {
+          const xa = off + j * P.pitch, x = X(xa);
+          const k = near(c, x, c.my, 80 * u) * P.bend * (0.3 + I);
+          const e = Y(E(xa)) + (c.my - Y(E(xa))) * 0.3 * k;
+          const grow = c.introAt(0.004 * Math.abs(j));
+          const y0 = set ? botY : topY, y1 = lerp(y0, set ? e + P.overlap * u : e - P.overlap * u, grow);
+          const h = Math.abs(y1 - y0), w = P.w * u;
+          if (h < w) continue;
+          const base = 0.75 + 0.25 * sd(st, j, set);
+          pen.el(id++, set);
+          outline(pen, rrPath(x, (y0 + y1) / 2, w, h, w / 2), 0, (s, xx, y) => base * (1 - P.fade + P.fade * gauss((y - e) / (240 * u))));
+        }
+      }
+    },
+  },
+
+  collateral: {
+    base: 'dots',
+    label: 'Collateral Management',
+    family: 'Collateral Management',
+    group: 'Roles',
+    blurb: 'A grid of rings that grow as they move down and across, like collateral building into place. The ramp drifts and rings near the cursor swell.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    defaults: { pitchX: 80, pitchY: 80, stagger: 0, ox: -279.5, oy: -416.5, size: 80, profile: 1, floor: 0.17, rampY: -35, rampSpan: 660, rampTilt: 0.3, light: 225, contrast: 0.6 },
+  },
+});
+
+// Institution and role heroes are a single 2:3 image used at every breakpoint, so they always draw with the tall layout.
+for (const C of Object.values(CONCEPTS)) if (C.group === 'Institutions' || C.group === 'Roles') C.only = 'tall';
+
+// Variants: a concept with base shares that concept's drawing and controls, with its own defaults.
+for (const [id, C] of Object.entries(CONCEPTS)) {
+  if (!C.base) continue;
+  const B = CONCEPTS[C.base];
+  C.init = B.init; C.draw = B.draw;
+  C.params = Object.fromEntries(Object.entries(B.params).map(([k, m]) => [k, C.defaults && k in C.defaults ? { ...m, v: C.defaults[k] } : m]));
+}
 
 // ---------- Config ----------
 const FILL = { solid: 0, gradient: 1, alternate: 2 };
@@ -1056,7 +1957,7 @@ export function createHero(el, config = {}, options = {}) {
     const tilt = mouseAmt * (0.03 + 0.2 * I);
     root.rotation.x = cfg.camera.tilt * Math.PI / 180 - mny * md * tilt;
     root.rotation.y = cfg.camera.orbit * Math.PI / 180 + mnx * md * tilt;
-    const lay = W / H < 1 ? cfg.layout.tall : cfg.layout.wide;
+    const lay = W / H < 1 || concept.only === 'tall' ? cfg.layout.tall : cfg.layout.wide;
     const ctx = {
       W, H, D, t, I, u: (H / 900) * lay.s, ax: (lay.x - 0.5) * W, ay: (0.5 - lay.y) * H,
       mx: mouse.x, my: mouse.y, md, mn: { x: mnx, y: mny }, mouseAmt, introAt,
