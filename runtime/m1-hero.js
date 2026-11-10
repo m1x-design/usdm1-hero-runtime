@@ -92,7 +92,10 @@ class Pen {
       const k = e >> 1, span = hi[k] - lo[k];
       if (span < 1e-6) continue;
       const t = (P[i * 3] * dx + P[i * 3 + 1] * dy - lo[k]) / span;
-      A[i] *= Math.max(0, 1 - t / r);
+      // A shape with almost no extent along the fill direction (a straight line running across it) would flip between
+      // unfaded and fully faded as it bends by a fraction of a pixel, so the fade eases in over the first few pixels.
+      const w = span >= 3 ? 1 : sstep(0, 3, span);
+      A[i] *= 1 - w * Math.min(1, t / r);
     }
   }
   // f(t, o) fills o.x, o.y, o.z, o.a for t in [0, 1]
