@@ -1504,6 +1504,59 @@ Object.assign(CONCEPTS, {
     },
   },
 
+  pooling: {
+    label: 'CFO/Treasury',
+    family: 'CFO/Treasury',
+    group: 'Roles',
+    blurb: 'Lines spread across the top sweep down into one tight bundle, like cash from many accounts pooled into a single position. Light pulses travel steadily down every line into the bundle, and lines near the cursor bend toward it.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      count: p(41, 4, 120, 1, 'Lines'),
+      spread: p(600, 50, 1600, 1, 'Spread at top'),
+      bundle: p(88, 0, 600, 1, 'Bundle width'),
+      neck: p(120, -400, 480, 1, 'Neck Y'),
+      top: p(-560, -900, 0, 1, 'Top Y'),
+      cx: p(0, -600, 600, 1, 'Bundle X'),
+      hold: p(410, 0, 900, 1, 'Top curve'),
+      pull: p(270, 0, 900, 1, 'Neck curve'),
+      pulses: p(3, 1, 8, 1, 'Pulses per line'),
+      speed: p(1, 0, 4, 0.05, 'Pulse speed'),
+      flow: p(1, 0, 3, 0.05, 'Light flow'),
+      lean: p(1, 0, 3, 0.05, 'Cursor bend'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
+      const bot = Math.max(P.neck + 40, (c.ay + H / 2) / u + 20); // the bundle always runs off the bottom edge
+      const top = Math.min(P.top, (c.ay - H / 2) / u - 20); // lines enter from above the top edge
+      const ben = P.lean * (0.3 + I);
+      const sc = 0.62; // share of each line spent on the curve, the rest runs straight down
+      for (let i = 0; i < n; i++) {
+        const f = n > 1 ? i / (n - 1) : 0.5;
+        const x0 = P.cx + (f - 0.5) * P.spread, b = P.cx + (f - 0.5) * P.bundle;
+        const y1 = P.neck, c1 = top + P.hold, c2 = y1 - P.pull;
+        const lag = 0.12 * sd(st, i, 1); // small per-line offset so pulses ripple instead of marching in lockstep
+        const grow = c.introAt(0.01 * Math.abs(i - (n - 1) / 2));
+        const base = 0.7 + 0.3 * sd(st, i, 2);
+        pen.el(i);
+        pen.poly(90, (s, o) => {
+          const q = s * grow;
+          let xa, ya;
+          if (q < sc) {
+            const v = q / sc, w = 1 - v;
+            xa = w * w * w * x0 + 3 * w * w * v * x0 + 3 * w * v * v * b + v * v * v * b;
+            ya = w * w * w * top + 3 * w * w * v * c1 + 3 * w * v * v * c2 + v * v * v * y1;
+          } else { xa = b; ya = lerp(y1, bot, (q - sc) / (1 - sc)); }
+          o.x = X(xa); o.y = Y(ya);
+          const k = near(c, o.x, o.y, 160 * u) * ben;
+          o.x += (c.mx - o.x) * 0.12 * k;
+          const ph = frac(q * P.pulses - t * 0.08 * P.speed + lag); // always moves down the line, toward the bundle
+          o.a = base * (1 + P.flow * mo * 1.4 * gauss(Math.min(ph, 1 - ph) / 0.05) + 0.6 * k);
+        });
+      }
+    },
+  },
+
   trading: {
     label: 'Trading',
     family: 'Trading',
