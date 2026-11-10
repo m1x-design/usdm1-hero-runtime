@@ -1511,10 +1511,10 @@ Object.assign(CONCEPTS, {
     label: 'CFO/Treasury',
     family: 'CFO/Treasury',
     group: 'Roles',
-    blurb: 'Lines spread across the top sweep down into one tight bundle, like cash from many accounts pooled into a single position. Light pulses travel steadily down every line into the bundle, and lines near the cursor bend toward it.',
+    blurb: 'Lines spread across the top sweep down into one tight bundle, like cash from many accounts pooled into a single position. Light pulses travel steadily down every line into the bundle, and lines near the cursor glow brighter.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
     params: {
-      count: p(41, 4, 120, 1, 'Lines'),
+      count: p(40, 4, 120, 1, 'Lines'), // even, so no line runs dead straight down the center
       spread: p(600, 50, 1600, 1, 'Spread at top'),
       bundle: p(88, 0, 600, 1, 'Bundle width'),
       neck: p(120, -400, 480, 1, 'Neck Y'),
@@ -1525,14 +1525,14 @@ Object.assign(CONCEPTS, {
       pulses: p(3, 1, 8, 1, 'Pulses per line'),
       speed: p(1, 0, 4, 0.05, 'Pulse speed'),
       flow: p(1, 0, 3, 0.05, 'Light flow'),
-      lean: p(1, 0, 3, 0.05, 'Cursor bend'),
+      lean: p(1, 0, 3, 0.05, 'Cursor glow'),
     },
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
       const { u, t, I, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
       const bot = Math.max(P.neck + 40, (c.ay + H / 2) / u + 20); // the bundle always runs off the bottom edge
       const top = Math.min(P.top, (c.ay - H / 2) / u - 20); // lines enter from above the top edge
-      const ben = P.lean * (0.3 + I);
+      const glow = P.lean * (0.3 + I);
       const sc = 0.62; // share of each line spent on the curve, the rest runs straight down
       for (let i = 0; i < n; i++) {
         const f = n > 1 ? i / (n - 1) : 0.5;
@@ -1551,10 +1551,11 @@ Object.assign(CONCEPTS, {
             ya = w * w * w * top + 3 * w * w * v * c1 + 3 * w * v * v * c2 + v * v * v * y1;
           } else { xa = b; ya = lerp(y1, bot, (q - sc) / (1 - sc)); }
           o.x = X(xa); o.y = Y(ya);
-          const k = near(c, o.x, o.y, 160 * u) * ben;
-          o.x += (c.mx - o.x) * 0.12 * k;
+          // The cursor only brightens lines, never moves them: a bend would change each line's extent, and with the
+          // Gradient stroke fill (which fades across that extent) the near-straight center lines would flicker.
+          const k = near(c, o.x, o.y, 160 * u) * glow;
           const ph = frac(q * P.pulses - t * 0.08 * P.speed + lag); // always moves down the line, toward the bundle
-          o.a = base * (1 + P.flow * mo * 1.4 * gauss(Math.min(ph, 1 - ph) / 0.05) + 0.6 * k);
+          o.a = base * (1 + P.flow * mo * 1.4 * gauss(Math.min(ph, 1 - ph) / 0.05) + 0.9 * k);
         });
       }
     },
