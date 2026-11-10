@@ -1693,7 +1693,7 @@ export const DEFAULTS = {
     band: 0.8, bandAngle: 60, bandWidth: 2.2, bandX: 0.5, bandY: 0.5,
   },
   motion: { intensity: 0.35, speed: 1, intro: true },
-  interact: { mouse: 1, glow: 0.6, glowRadius: 0.22, touch: true },
+  interact: { mouse: 1, glow: 0.6, glowRadius: 0.22, touch: true, scrollSweep: 0.7 },
   camera: { fov: 30, tilt: 0, orbit: 0 },
   // Texture layers shared by every concept: hairline grid and film grain.
   grid: { on: false, strength: 0.35, step: 40, depth: 160, fx: 0.5, fy: 0.5, focus: 1, grainOn: true, grain: 0.03 },
@@ -2076,6 +2076,22 @@ export function createHero(el, config = {}, options = {}) {
     if (!running) renderFrame();
   }
   function onLeave() { mouse.tin = 0; }
+  // Touch screens have no hover, so scrolling stands in for it: a virtual cursor sweeps down the
+  // middle of the art as the page scrolls (back up when scrolling up) and fades out once scrolling stops.
+  const touchMQ = window.matchMedia ? matchMedia('(hover: none) and (pointer: coarse)') : null;
+  let sweepIdle = 0;
+  function onScroll() {
+    const amt = cfg.interact.scrollSweep || 0;
+    if (!opt.interactive || !amt || !touchMQ || !touchMQ.matches || !running) return;
+    const r = el.getBoundingClientRect(), vh = innerHeight;
+    if (r.bottom < 0 || r.top > vh) return;
+    const from = Math.min(vh, Math.max(0, r.top + scrollY)); // sweep starts where the art sits at load, or as it enters
+    const f = clamp((from - r.top) / (from + 0.6 * r.height), 0, 1);
+    mouse.tx = 0; mouse.ty = r.height / 2 - f * r.height; mouse.tin = amt;
+    if (mouse.in < 0.05) { mouse.x = mouse.tx; mouse.y = mouse.ty; } // faded out: start at the scroll position, not where the last sweep ended
+    clearTimeout(sweepIdle); sweepIdle = setTimeout(() => { mouse.tin = 0; }, 700);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
   window.addEventListener('pointermove', onPointer, { passive: true });
   document.documentElement.addEventListener('pointerleave', onLeave);
   reduceMQ && reduceMQ.addEventListener && reduceMQ.addEventListener('change', sync);
@@ -2144,7 +2160,7 @@ export function createHero(el, config = {}, options = {}) {
     },
     destroy() {
       destroyed = true; stop();
-      window.removeEventListener('pointermove', onPointer);
+      window.removeEventListener('pointermove', onPointer); window.removeEventListener('scroll', onScroll); clearTimeout(sweepIdle);
       document.documentElement.removeEventListener('pointerleave', onLeave);
       reduceMQ && reduceMQ.removeEventListener && reduceMQ.removeEventListener('change', sync);
       ro.disconnect(); io && io.disconnect();
