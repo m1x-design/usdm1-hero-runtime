@@ -2022,6 +2022,79 @@ Object.assign(CONCEPTS, {
     },
   },
 
+  alwaysOpenTrim: {
+    label: 'Collateral Management 24/7 Trimmed',
+    family: 'Collateral Management',
+    group: 'Roles',
+    blurb: 'A pared-back 24/7. One day in New York time runs left to right with the closed hours hatched. A single clock drives everything: the USDM1 burst marker tracks the time of day around the clock, while the market markers move with it only in open hours and stop at the close. The band under the cursor brightens.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      orient: p(0, 0, 1, 1, 'Orientation', { options: { 'Horizontal (left to right)': 0, 'Vertical (top to bottom)': 1 } }),
+      openH: p(9.5, 0, 24, 0.25, 'Market opens (hour ET)'),
+      closeH: p(16, 0, 24, 0.25, 'Market closes (hour ET)'),
+      hatch: p(44, 12, 100, 1, 'Hatch gap'),
+      lanes: p(2, 0, 6, 1, 'Market lanes'),
+      spread: p(0.6, 0.2, 1, 0.01, 'Lane spread'),
+      double: p(1, 0, 1, 1, 'USDM1 line', { options: { Single: 0, Double: 1 } }),
+      mark: p(30, 12, 56, 1, 'USDM1 marker size'),
+      speed: p(1, 0, 4, 0.05, 'Speed'),
+      lean: p(1, 0, 3, 0.05, 'Cursor glow'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      // Work in (along, across), as in the full 24/7: along is the direction time runs.
+      const hz = !P.orient;
+      const PX = (a, b) => X(hz ? a : b), PY = (a, b) => Y(hz ? b : a);
+      const S = (a1, b1, a2, b2, al1, al2 = al1) => pen.seg(PX(a1, b1), PY(a1, b1), 0, al1, PX(a2, b2), PY(a2, b2), 0, al2);
+      const half = (hz ? W : H) / 2 / u, ha = half + 30, hb = (hz ? H : W) / 2 / u + 40;
+      const hx = (h) => -half + clamp(h, 0, 24) / 24 * 2 * half;
+      const xo = hx(Math.min(P.openH, P.closeH)), xc = hx(Math.max(P.openH, P.closeH));
+      const ca = hz ? (c.mx - c.ax) / u : (c.ay - c.my) / u, glow = P.lean * c.md * c.mouseAmt * (0.4 + I);
+      let id = 0;
+      // The two closed stretches: wide, light hatching with no edge rules of their own past the frame.
+      const bandA = 0.7 * c.introAt(0), slide = (t * 4 * P.speed) % P.hatch;
+      for (const [a, b] of [[-ha - 60, xo], [xc, ha + 60]]) {
+        const k = 1 + 1.4 * glow * gauss((ca - clamp(ca, a, b)) / 40);
+        pen.el(id++);
+        S(a, -hb, a, hb, 0.35 * bandA * k); S(b, -hb, b, hb, 0.35 * bandA * k);
+        pen.el(id++);
+        for (let x = -hb - (b - a) + slide; x < hb; x += P.hatch) S(b, x, a, x + (b - a), 0.28 * bandA * k);
+      }
+      // Market lanes exist only in open hours, evenly on both sides of USDM1.
+      const nl = Math.round(P.lanes), sp = P.spread * 2 * (hb - 40) / (nl + 1), left = Math.floor(nl / 2), lanes = [];
+      for (let k = 0; k < nl; k++) lanes.push(k < left ? -(k + 1) * sp : (k - left + 1) * sp);
+      const laneA = c.introAt(0.2);
+      lanes.forEach((x, i) => { pen.el(id++); S(xo, x, xc, x, (0.45 + 0.15 * sd(st, i)) * laneA); });
+      const ua = c.introAt(0.4);
+      pen.el(id++);
+      for (const dx of P.double ? [-2.5, 2.5] : [0]) S(-ha, dx, ha, dx, ua);
+      // One clock drives every marker. "now" runs from just off the left edge to just off the right, so the USDM1 marker
+      // never pops at midnight. Markers have fixed ids and are never "every other" shapes, so their stroke fill can't flip.
+      const R = P.mark, span = 2 * half + 2 * R, v = 60 * P.speed, dayT = v > 0 ? span / v : 1;
+      const d = v > 0 ? frac(t / dayT + 0.42) : 0.55, now = -half - R + d * span;
+      const base = id, mark = (slot, a0, b0, r, a) => {
+        pen.el(base + slot, false);
+        pen.disc(PX(a0, b0), PY(a0, b0), 0, r * u); ring(pen, PX(a0, b0), PY(a0, b0), 2 * r * u, 0, () => a);
+      };
+      // USDM1: a ring holding the brand burst, always upright.
+      const a = ua * (1 + 0.4 * mo), sb = 0.72 * R / 15, bx = hz ? now : 0, by = hz ? 0 : now;
+      mark(0, now, 0, R, a);
+      for (const [deg, r0, r1] of BURST) {
+        const th = deg * Math.PI / 180, ux = Math.cos(th), uy = Math.sin(th);
+        pen.seg(X(bx + ux * r0 * sb), Y(by + uy * r0 * sb), 0, a, X(bx + ux * r1 * sb), Y(by + uy * r1 * sb), 0, a);
+      }
+      // Market markers move with the clock while open and stop just short of the close. Near midnight they shrink away at
+      // the close while new ones grow at the open, ready for tomorrow.
+      const r = 9, pad = r + 8, la = laneA * 0.8, sw = sstep(0.93, 0.995, d);
+      const at = clamp(now, xo + pad, xc - pad);
+      lanes.forEach((x, i) => {
+        if (sw < 0.999) mark(1 + i * 2, at, x, r * (1 - sw), la);
+        if (sw > 0.001) mark(2 + i * 2, xo + pad, x, r * sw, la);
+      });
+    },
+  },
+
   collateral: {
     base: 'dots',
     label: 'Collateral Management',
