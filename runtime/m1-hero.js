@@ -26,17 +26,40 @@ class Pen {
   constructor() {
     // nb: each vertex's neighbor along its path (previous point for a segment start, next point for its end),
     // or the vertex itself at a free end. Wide strokes use it to miter the joins. c0: first vertex of the current path.
-    this.L = { pos: new Float32Array(3 * 16384), a: new Float32Array(16384), nb: new Float32Array(3 * 16384), e: new Int32Array(16384), n: 0, c0: 0 };
+    this.L = { pos: new Float32Array(3 * 16384), a: new Float32Array(16384), nb: new Float32Array(3 * 16384), e: new Int32Array(16384), k: new Float32Array(16384), n: 0, c0: 0 };
+    // Fills: triangles painted with the background, used to hide what lies behind a shape. k is the stacking layer
+    // (higher sits in front); every line vertex carries the layer of its shape too, so a fill hides only the lines
+    // of shapes below it. Lines with layer -1 (grid, unlayered concepts) sit behind every fill.
+    this.F = { pos: new Float32Array(3 * 8192), k: new Float32Array(8192), n: 0 };
+    this.layer = -1;
     // e: which shape each vertex belongs to, as id * 2 + (1 for every other shape), or -1 for lines that never take
     // the stroke gradient (grid, rules, moving light). Concepts set it with el() before drawing each shape.
     this.cur = -1; this.lo = new Float64Array(256); this.hi = new Float64Array(256);
     this.P = { pos: new Float32Array(3 * 1024), a: new Float32Array(1024), s: new Float32Array(1024), n: 0 };
     this.o = { x: 0, y: 0, z: 0, a: 1 };
-    this.grewL = this.grewP = false;
+    this.grewL = this.grewP = this.grewF = false;
   }
-  reset() { this.L.n = 0; this.L.c0 = 0; this.P.n = 0; this.cur = -1; }
+  reset() { this.L.n = 0; this.L.c0 = 0; this.P.n = 0; this.F.n = 0; this.cur = -1; this.layer = -1; }
   // Start a shape: id groups its lines (the gradient spans the shape's own extent), odd marks every other shape.
-  el(id, odd = id & 1) { this.cur = id < 0 ? -1 : id * 2 + (odd ? 1 : 0); }
+  el(id, odd = id & 1) { this.cur = id < 0 ? -1 : id * 2 + (odd ? 1 : 0); this.layer = id < 0 ? -1 : id; }
+  // Filled disc in the background color at the current layer.
+  disc(cx, cy, z, r, n = 48) {
+    const F = this.F;
+    if (F.n + n * 3 > F.k.length) {
+      const c = Math.max(F.k.length * 2, F.n + n * 3);
+      const p = new Float32Array(c * 3); p.set(F.pos); F.pos = p;
+      const k = new Float32Array(c); k.set(F.k); F.k = k;
+      this.grewF = true;
+    }
+    const pts = circlePts(n);
+    for (let i = 0; i < n; i++) {
+      const a = i * 2, b = ((i + 1) % n) * 2, o = F.n * 3, P = F.pos, d = r * 2;
+      P[o] = cx; P[o + 1] = cy; P[o + 2] = z;
+      P[o + 3] = cx + pts[a] * d; P[o + 4] = cy + pts[a + 1] * d; P[o + 5] = z;
+      P[o + 6] = cx + pts[b] * d; P[o + 7] = cy + pts[b + 1] * d; P[o + 8] = z;
+      F.k[F.n] = F.k[F.n + 1] = F.k[F.n + 2] = this.layer; F.n += 3;
+    }
+  }
   _growL(k) {
     const L = this.L;
     if (L.n + k <= L.a.length) return;
@@ -45,6 +68,7 @@ class Pen {
     const a = new Float32Array(c); a.set(L.a); L.a = a;
     const nb = new Float32Array(c * 3); nb.set(L.nb); L.nb = nb;
     const e = new Int32Array(c); e.set(L.e); L.e = e;
+    const lk = new Float32Array(c); lk.set(L.k); L.k = lk;
     this.grewL = true;
   }
   seg(x1, y1, z1, a1, x2, y2, z2, a2) {
@@ -66,7 +90,7 @@ class Pen {
       N[i + 3] = P[c + 3]; N[i + 4] = P[c + 4]; N[i + 5] = P[c + 5];
       N[c] = x1; N[c + 1] = y1; N[c + 2] = z1;
     }
-    L.a[L.n] = a1; L.a[L.n + 1] = a2; L.e[L.n] = L.e[L.n + 1] = this.cur; L.n += 2;
+    L.a[L.n] = a1; L.a[L.n + 1] = a2; L.e[L.n] = L.e[L.n + 1] = this.cur; L.k[L.n] = L.k[L.n + 1] = this.layer; L.n += 2;
   }
   // Stroke fill. mode 1: every shape fades from full strength to clear across its own extent, toward angle ang
   // (radians, 0 = right, counterclockwise), reaching clear at reach × the extent. mode 2: every other shape does.
@@ -770,17 +794,29 @@ const seeds = (rnd, n = 1024) => { const s = new Float32Array(n); for (let i = 0
 const sd = (st, i, j = 0) => st.s[((i * 131 + j * 31) % 1024 + 1024) % 1024];
 
 const SPLIT = { x: 0.5, y: 0.5, s: 0.9375 };
+// The USDM1 burst from the brand mark (logo units, radius 15, y down): [angle in degrees, inner radius, outer radius].
+// Long rays on the axes, shorter ones on the diagonals, and eight inner rays between them that reach closer to the center.
+const BURST = [
+  ...[0, 90, 180, 270].map((d) => [d, 10, 14.86]),
+  ...[45, 135, 225, 315].map((d) => [d, 10, 13.7]),
+  ...[22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5].map((d) => [d, 6.3, 14.4]),
+];
+
 
 // Structured Products panels, Figma px in the 1600 × 900 frame: [left, top, right, bottom].
 const PANELS = [
   [34, -40, 435, 279], [34, 292, 435, 692], [447, -40, 635, 219], [650, -40, 735, 219], [748, -40, 954, 89],
   [748, 102, 954, 219], [447, 232, 954, 692], [969, -40, 1238, 692], [1253, -40, 1570, 692], [34, 705, 1146, 960], [1161, 705, 1570, 960],
 ];
+// OTC Desks columns drawn with a solid stroke in the Figma frame (the rest fade downward), by index into OTC_TOPS.
+const OTC_ACCENTS = new Set([6, 8, 12, 16, 22, 27, 32]);
 // OTC Desks column tops, Figma px in the 640 × 960 frame, 32.6 px apart. Repeats mirrored past the ends.
 const OTC_TOPS = [373, 375, 364, 356, 351, 338, 315, 292, 285, 299, 320, 327, 315, 302, 307, 336, 372, 391, 379, 348, 317, 297, 285, 273, 267, 279, 315, 364, 397, 396, 364, 327, 308, 308, 314, 311, 300, 294];
 // Hedge Funds and Trading Firms bars, Figma px in the 640 × 960 frame: [center x, width, top, bottom].
+// Left to right: the long side's six floor bars (outer to center), then the short side's six ceiling bars (center to outer).
+// The floor bars are mirrored in Figma, so their x there is the right edge. Every gap is 16 px.
 const HEDGE = [
-  [34.5, 29, 400, 774], [85.5, 33, 357, 774], [140.5, 37, 320, 774], [202.5, 43, 269, 774], [269, 48, 217, 774], [337.5, 51, 186, 774],
+  [5.5, 29, 400, 774], [52.5, 33, 357, 774], [103.5, 37, 320, 774], [159.5, 43, 269, 774], [221, 48, 217, 774], [286.5, 51, 186, 774],
   [353.5, 51, 186, 679], [419, 48, 186, 650], [480.5, 43, 186, 626], [536.5, 37, 186, 587], [587.5, 33, 186, 558], [634.5, 29, 186, 533],
 ];
 
@@ -987,7 +1023,8 @@ Object.assign(CONCEPTS, {
         const y = Y((i - (n - 1) / 2) * P.pitch);
         const k = near(c, c.mx, y, P.pitch * 0.9 * u);
         const L = P.len * u * c.introAt(0.04 * i);
-        const cx = X(sg * P.offset) - sg * (P.len * u - L) / 2 + sg * P.slide * mo * 60 * u * Math.sin(t * 0.3 + sd(st, i) * TAU) + (c.mx - X(sg * P.offset)) * 0.04 * k;
+        // The intro grows each lane in from its outer end, so lanes enter from the left and right edges.
+        const cx = X(sg * P.offset) + sg * (P.len * u - L) / 2 + sg * P.slide * mo * 60 * u * Math.sin(t * 0.3 + sd(st, i) * TAU) + (c.mx - X(sg * P.offset)) * 0.04 * k;
         const inner = cx - sg * L / 2; // the end that faces the center
         const head = frac(t * 0.06 + sd(st, i, 1));
         const base = (0.6 + 0.4 * sd(st, i, 2)) * (1 + 0.9 * k);
@@ -1183,38 +1220,95 @@ Object.assign(CONCEPTS, {
     label: 'Prime Brokers',
     family: 'Prime Brokers',
     group: 'Institutions',
-    blurb: 'Lines that leave one narrow source and fan out across the frame, like access spreading from a prime broker. Pulses run down the lines, the fan sways and its spread follows the cursor.',
+    blurb: 'Lines that leave one narrow source and fan out across the frame, like access spreading from a prime broker. Pulses run down the lines, the fan slowly widens and narrows, and the cursor spreads it: wider toward the edges, tighter at the center.',
     layout: { wide: { x: 0.5, y: 0.56, s: 1.3 }, tall: SPLIT },
     params: {
       perSide: p(9, 1, 40, 1, 'Lines per side'),
       topGap: p(19.5, 0, 100, 0.1, 'Top spacing'),
       botGap: p(51.25, 0, 300, 0.05, 'Bottom spacing'),
-      cross: p(2, -60, 60, 0.5, 'Center cross'),
+      cross: p(-9.75, -60, 60, 0.25, 'Center cross'), // negative keeps the two center lines apart (half the top spacing), so they never overlap
       botCenter: p(38, -200, 200, 1, 'Bottom center gap'),
       top: p(-214, -900, 900, 1, 'Top Y'),
       bottom: p(630, -900, 1400, 1, 'Bottom Y'),
       bend: p(1.35, 0.5, 3, 0.01, 'Flare'),
       fadeIn: p(0.25, 0, 1, 0.01, 'Top fade'),
-      sway: p(1, 0, 4, 0.05, 'Sway'),
+      sway: p(1, 0, 4, 0.05, 'Breathe'),
       pulses: p(1, 0, 3, 0.05, 'Pulses'),
-      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+      lean: p(1, 0, 3, 0.05, 'Cursor spread'),
     },
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
       const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.perSide);
       const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
-      const sway = P.sway * mo * 40 * Math.sin(t * 0.25) + c.mn.x * lean * 120;
+      // The fan only widens and narrows, mirrored about the center line: a slow breath, plus the cursor
+      // spreading it wider toward either edge and squeezing it at the center. It never swings sideways.
+      const spread = 1 + P.sway * mo * 0.08 * Math.sin(t * 0.25) + lean * 0.2 * (Math.abs(c.mn.x) * 2 - 1);
       let id = 0;
       for (const sg of [-1, 1]) for (let j = 0; j < n; j++) {
-        const xt = sg * (P.topGap * j - P.cross), xb = sg * (P.botGap * j + P.botCenter) * (1 + 0.15 * c.mn.x * sg * lean) + sway;
+        const xt = sg * (P.topGap * j - P.cross), xb = sg * (P.botGap * j + P.botCenter) * spread;
         const head = frac(t * 0.07 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg));
         const base = 0.7 + 0.3 * sd(st, j, sg + 4), grow = c.introAt(0.04 * j);
         pen.el(id++);
         pen.poly(40, (s, o) => {
-          const q = s * grow;
+          const q = 1 - (1 - s) * grow; // the intro grows each line up from the bottom
           o.x = X(lerp(xt, xb, Math.pow(q, P.bend))); o.y = Y(lerp(P.top, P.bottom, q));
           o.a = base * sstep(0, Math.max(0.001, P.fadeIn), q) * (0.85 + P.pulses * mo * 1.6 * gauss((q - head) / 0.04));
         });
+      }
+    },
+  },
+
+  primeAlt: {
+    label: 'Prime Brokers Alt',
+    family: 'Prime Brokers',
+    group: 'Institutions',
+    blurb: 'Slim slats that hang from one flat top edge and lean in toward a point below the frame, laid out as in the Figma hero. Light runs down the slats, the set slowly widens and narrows, and the cursor spreads it: wider toward the edges, tighter at the center.',
+    layout: { wide: { x: 0.5, y: 0.56, s: 1.3 }, tall: SPLIT },
+    // Defaults are the Figma frame (640 × 960) in px, measured from its center: 9 slats per side, 24.1 px wide,
+    // tops 51.3 px apart along y -214, bottoms 19.5 px apart along y 630 (below the frame). Art y runs down.
+    params: {
+      perSide: p(9, 1, 30, 1, 'Slats per side'),
+      width: p(24.1, 0, 120, 0.1, 'Slat width'),
+      topGap: p(51.3, 0, 200, 0.1, 'Top spacing'),
+      topCenter: p(25.7, -200, 200, 0.1, 'Top center offset'),
+      botGap: p(19.5, 0, 200, 0.1, 'Bottom spacing'),
+      botCenter: p(9.8, -200, 200, 0.1, 'Bottom center offset'),
+      top: p(-214, -900, 900, 1, 'Top Y'),
+      bottom: p(630, -900, 1400, 1, 'Bottom Y'),
+      light: p(1, 0, 1, 0.01, 'Gradient fade'),
+      sway: p(1, 0, 4, 0.05, 'Breathe'),
+      pulses: p(1, 0, 3, 0.05, 'Pulses'),
+      lean: p(1, 0, 3, 0.05, 'Cursor spread'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.perSide);
+      const H = P.bottom - P.top, w = P.width / 2;
+      if (Math.abs(H) < 1) return;
+      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
+      // Slat positions only widen and narrow, mirrored about the center line; the slats keep their width.
+      const spread = 1 + P.sway * mo * 0.06 * Math.sin(t * 0.25) + lean * 0.15 * (Math.abs(c.mn.x) * 2 - 1);
+      let id = 0;
+      for (const sg of [-1, 1]) for (let j = 0; j < n; j++) {
+        const xt = sg * (P.topCenter + P.topGap * j), xb = sg * (P.botCenter + P.botGap * j);
+        // Figma lays the same stroke gradient over each slat's own bounding box: clear at its top left, full at its bottom right.
+        const x0 = Math.min(xt, xb) - w, bw = Math.abs(xt - xb) + 2 * w;
+        const lit = (x, y) => 1 - P.light * clamp(1.2936 - 0.7461 * (x - x0) / bw - 0.7909 * (y - P.top) / H, 0, 1);
+        const base = 0.9 + 0.1 * sd(st, j, sg + 4), grow = c.introAt(0.04 * j);
+        const head = frac(t * 0.06 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg));
+        const at = (q, e) => { // q: 0 at the bottom, 1 at the top; e: -1 left edge, 1 right edge
+          const x = lerp(xb, xt, q) + e * w, y = lerp(P.bottom, P.top, q);
+          return [X(lerp(xb, xt, q) * spread + e * w), Y(y), base * lit(x, y) * (1 + P.pulses * mo * 1.4 * gauss((1 - q - head) / 0.035))];
+        };
+        pen.el(id++);
+        for (const e of [-1, 1]) pen.poly(48, (s, o) => { // the intro grows each slat up from the bottom
+          const [x, y, a] = at(s * grow, e); o.x = x; o.y = y; o.a = a;
+        });
+        const cap = sstep(0.85, 1, grow);
+        for (const q of [0, 1]) {
+          const [x1, y1, a1] = at(q * grow, -1), [x2, y2, a2] = at(q * grow, 1);
+          pen.seg(x1, y1, 0, a1 * (q ? cap : 1), x2, y2, 0, a2 * (q ? cap : 1));
+        }
       }
     },
   },
@@ -1226,7 +1320,7 @@ Object.assign(CONCEPTS, {
     group: 'Institutions',
     blurb: 'A staggered field of rings that swells toward the center like a crowded venue. The swell drifts, rings shimmer as they quote and the swell follows the cursor.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
-    defaults: { pitchX: 84, pitchY: 84.5, stagger: 0, ox: 42, oy: 40, size: 104, profile: 0, floor: 0.3, reach: 400, light: 225, contrast: 0.45 },
+    defaults: { pitchX: 84, pitchY: 84.5, stagger: 0, ox: 42, oy: 40, size: 104, profile: 0, floor: 0.3, reach: 400, light: 225, contrast: 0.45, fill: 1, depth: 1 },
   },
 
   dots: {
@@ -1256,10 +1350,13 @@ Object.assign(CONCEPTS, {
       shimmer: p(1, 0, 3, 0.05, 'Shimmer'),
       drift: p(1, 0, 4, 0.05, 'Swell drift'),
       follow: p(1, 0, 3, 0.05, 'Cursor follow'),
+      fill: p(0, 0, 1, 1, 'Ring fill', { options: { None: 0, Background: 1 } }),
+      depth: p(0, 0, 1, 1, 'Ring sizing', { options: { Scale: 0, Depth: 1 } }),
+      parallax: p(0.12, 0, 1, 0.01, 'Depth parallax'),
     },
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
-      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      const { u, t, I, W, H, D } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), filled = P.fill > 0.5, deep = P.depth > 0.5;
       const px = P.pitchX * u, py = P.pitchY * u, mode = Math.round(P.profile);
       const lean = P.follow * c.md * c.mouseAmt * (0.3 + I);
       const sx = X(P.cx) + P.drift * mo * 60 * u * Math.sin(t * 0.2) + (c.mx - X(P.cx)) * 0.6 * lean;
@@ -1287,7 +1384,21 @@ Object.assign(CONCEPTS, {
           if (d < 1 || offView(c, x, y, d / 2, d / 2)) continue;
           const base = (0.6 + 0.4 * sd(st, j, i)) * (1 + P.shimmer * mo * 0.5 * Math.max(0, Math.sin(t * 0.5 + sd(st, i, j + 7) * TAU)));
           pen.el(id++, (i + j) & 1);
-          ring(pen, x, y, d, 0, rim(base, P.light, P.contrast));
+          // Filled rings overlap like shingles, stacked as in the Figma frame: each row sits over the row above it
+          // and each ring over its left neighbor. The order depends only on grid position, so nothing ever pops.
+          if (filled) pen.layer = clamp(400 - i, 0, 640) * 512 + clamp(j + 256, 0, 511);
+          if (deep) {
+            // Rings set back in space: smaller rings sit further back, and the cursor tilt gives them parallax.
+            // At full parallax every ring is the same size and perspective alone shrinks it; lower values compress
+            // the depth (and size each ring to match) so the far rings don't swing across the frame.
+            const k = Math.max(0.05, f * shim), z = P.parallax * D * (1 - 1 / k), ps = D / (D - z);
+            const dw = dMax * k / ps * c.introAt(0.02 * Math.abs(i) + 0.02 * Math.abs(j));
+            if (filled) pen.disc(x / ps, y / ps, z, dw / 2);
+            ring(pen, x / ps, y / ps, dw, z, rim(base, P.light, P.contrast));
+          } else {
+            if (filled) pen.disc(x, y, 0, d / 2);
+            ring(pen, x, y, d, 0, rim(base, P.light, P.contrast));
+          }
         }
       }
     },
@@ -1297,33 +1408,66 @@ Object.assign(CONCEPTS, {
     label: 'Hedge Funds & Trading Firms',
     family: 'Hedge Funds & Trading Firms',
     group: 'Institutions',
-    blurb: 'Columns that climb from the floor on one side and hang from the ceiling on the other, like long and short books meeting. The columns rise and fall in turn and the ones near the cursor stretch toward it.',
+    blurb: 'Columns that climb from the floor on one side and hang from the ceiling on the other, like long and short books held against each other. Every few seconds a trade lands at the center: both books give up the same height in a quick burst, then glide slowly back to rest as the motion carries out to the edges. The floor and ceiling never move. The cursor presses the columns beneath it shorter, and their mirrored partners match.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1.3 }, tall: SPLIT },
     params: {
       scaleW: p(1, 0.2, 4, 0.01, 'Width scale'),
       spread: p(1, 0.3, 3, 0.01, 'Spread'),
       radius: p(0, 0, 40, 1, 'Corner radius'),
-      light: p(100, 0, 360, 1, 'Light angle'),
-      swing: p(1, 0, 4, 0.05, 'Rise and fall'),
-      stretch: p(1, 0, 3, 0.05, 'Cursor stretch'),
+      fade: p(1, 0, 1, 0.01, 'Gradient fade'),
+      trade: p(1, 0, 4, 0.05, 'Trade size'),
+      every: p(6, 2, 20, 0.5, 'Trade interval (s)'),
+      settle: p(1, 0.3, 3, 0.05, 'Settle speed'),
+      press: p(1, 0, 3, 0.05, 'Cursor weight'),
     },
-    init(c, P, rnd) { return seeds(rnd); },
+    init(c, P, rnd) { return Object.assign(seeds(rnd), { y: new Float64Array(6), v: new Float64Array(6), t: -1 }); },
     draw(c, pen, st, P) {
-      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
-      HEDGE.forEach(([xc, w, top, bot], i) => {
-        const up = bot === 774; // climbs from the floor; otherwise hangs from the ceiling
-        const x = X((xc - 320) * P.spread);
-        const k = near(c, x, c.my, 60 * u) * P.stretch * (0.4 + I);
-        const swing = P.swing * mo * 30 * Math.sin(t * 0.35 + i * 0.6);
-        let y0 = top - 480, y1 = bot - 480;
-        if (up) y0 -= swing + k * 60; else y1 += swing + k * 60;
-        const g = c.introAt(0.05 * i);
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = HEDGE.length;
+      const xs = HEDGE.map(([xc]) => X((xc - 320) * P.spread));
+      // The floor and ceiling lines are the baselines of the trade and never move: only the column heights change.
+      // Columns pair up mirror-wise (center with center, out to the outer pair) and each pair shares one height change,
+      // so whatever one side gains or gives up, the other matches exactly.
+      // Spring model over the six pairs, in art px of height given up (positive = shorter). Each pair has mass from its width,
+      // a soft spring back to rest, stiff links to its neighbors and strong damping: a trade bursts out fast, then glides back
+      // slowly without bouncing, while the outer pairs follow a beat later.
+      const dt0 = st.t < 0 || t < st.t ? 0 : Math.min(0.1, t - st.t);
+      if (st.t < 0 || t < st.t) { st.y.fill(0); st.v.fill(0); }
+      const kS = 1.5, kN = 30, damp = 4 * P.settle, press = P.press * c.md * c.mouseAmt * (0.4 + I);
+      const force = new Float64Array(6);
+      // The cursor presses the pair beneath it shorter, on both sides at once.
+      for (let j = 0; j < 6; j++) force[j] = press * 260 * (near(c, xs[5 - j], c.my, 80 * u) + near(c, xs[6 + j], c.my, 80 * u));
+      // A trade every few seconds, struck at the center pair, alternating direction.
+      const k0 = Math.floor((st.t - 2) / P.every), k1 = Math.floor((t - 2) / P.every);
+      if (dt0 > 0 && k1 > k0 && t > 2) st.v[0] += 250 * P.trade * (k1 & 1 ? 1 : -1) * (0.75 + 0.5 * sd(st, k1 & 1023));
+      for (let left = dt0, h; left > 1e-6; left -= h) {
+        h = Math.min(left, 1 / 120);
+        for (let j = 0; j < 6; j++) {
+          const m = HEDGE[5 - j][1] / 40, y = st.y[j];
+          let f = -kS * y - damp * st.v[j] * m + force[j];
+          if (j > 0) f += kN * (st.y[j - 1] - y);
+          if (j < 5) f += kN * (st.y[j + 1] - y);
+          st.v[j] += f / m * h;
+        }
+        for (let j = 0; j < 6; j++) st.y[j] += st.v[j] * h;
+      }
+      st.t = t;
+      HEDGE.forEach(([, w, top, bot], i) => {
+        const up = i < 6; // climbs from the floor; otherwise hangs from the ceiling
+        const d = clamp(st.y[up ? 5 - i : i - 6], -160, 0.6 * (bot - top)) * mo; // height given up, the same on both sides
+        let y0 = top - 480 + (up ? d : 0), y1 = bot - 480 - (up ? 0 : d); // only the free end moves
+        const g = c.introAt(0.05 * (up ? 5 - i : i - 6));
         if (up) y0 = lerp(y1, y0, g); else y1 = lerp(y0, y1, g);
-        const wy0 = Y(y0), wy1 = Y(y1);
+        const wy0 = Y(y0), wy1 = Y(y1), x = xs[i];
         const h = Math.abs(wy1 - wy0), cy = (wy0 + wy1) / 2, ww = w * P.scaleW * u;
         if (h < 1) return;
+        // The Figma stroke gradient over each column's own box: full at its bottom outer corner, clear toward the opposite top corner
+        // (the floor columns are mirrored, so theirs runs the other way).
+        const x0 = x - ww / 2, yt = Math.max(wy0, wy1);
         pen.el(i, up);
-        outline(pen, rrPath(x, cy, ww, h, P.radius * u), 0, rim((0.65 + 0.35 * sd(st, i)) * (1 + 0.7 * k), P.light, 0.5));
+        outline(pen, rrPath(x, cy, ww, h, P.radius * u), 0, (s, px, py) => {
+          const nx = clamp((px - x0) / ww, 0, 1), ny = clamp((yt - py) / h, 0, 1);
+          return (0.85 + 0.15 * sd(st, i)) * (1 - P.fade * clamp(1.294 - 0.746 * (up ? 1 - nx : nx) - 0.791 * ny, 0, 1));
+        });
       });
     },
   },
@@ -1342,7 +1486,7 @@ Object.assign(CONCEPTS, {
     label: 'OTC Desks',
     family: 'OTC Desks',
     group: 'Institutions',
-    blurb: 'A row of tall rounded columns whose tops trace an uneven skyline, like negotiated prices. The skyline ripples slowly and columns near the cursor rise to meet it.',
+    blurb: 'A row of tall rounded columns whose tops trace an uneven skyline, like negotiated prices. A lighter set of columns arrives after the rest, the skyline ripples slowly and columns near the cursor rise to meet it.',
     layout: { wide: { x: 0.5, y: 0.5, s: 0.95 }, tall: SPLIT },
     params: {
       pitch: p(32.6, 6, 120, 0.1, 'Pitch'),
@@ -1353,10 +1497,15 @@ Object.assign(CONCEPTS, {
       fade: p(0.7, 0, 1, 0.01, 'Downward fade'),
       ripple: p(1, 0, 4, 0.05, 'Ripple'),
       rise: p(1, 0, 3, 0.05, 'Cursor rise'),
+      set: p(0, 0, 1, 1, 'Lighter set', { options: { 'Every other': 0, 'Figma accents': 1 } }),
+      dim: p(0.45, 0, 1, 0.01, 'Other columns'),
+      entry: p(4, 0, 4, 1, 'Entrance', { options: { Fade: 0, 'Fade and lift': 1, 'Fade sweep': 2, Grow: 3, 'Diagonal sweep': 4 } }),
+      lag: p(2, 0, 6, 0.1, 'Lighter set delay (s)'),
     },
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
       const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), m = OTC_TOPS.length;
+      const entry = Math.round(P.entry);
       const mean = OTC_TOPS.reduce((a, b) => a + b, 0) / m;
       const j0 = Math.floor((-W / 2 / u - c.ax / u - P.x0) / P.pitch) - 1, j1 = Math.ceil((W / 2 / u - c.ax / u - P.x0) / P.pitch) + 1;
       const bottom = -H / 2 - 20;
@@ -1364,13 +1513,22 @@ Object.assign(CONCEPTS, {
         const q = ((j % (2 * m)) + 2 * m) % (2 * m), top0 = OTC_TOPS[q < m ? q : 2 * m - 1 - q];
         const x = X(P.x0 + j * P.pitch);
         const k = near(c, x, c.my, 70 * u) * P.rise * (0.4 + I);
-        const ty = mean + (top0 - mean) * P.relief - 480 + P.lift - P.ripple * mo * 18 * Math.sin(t * 0.4 + j * 0.35) - k * 70;
-        const yTop = Y(ty) * c.introAt(0.01 * Math.abs(j)) + bottom * (1 - c.introAt(0.01 * Math.abs(j)));
+        // The lighter set: every other column, or the solid-stroke accent columns from the Figma frame.
+        const light = Math.round(P.set) ? OTC_ACCENTS.has(q < m ? q : 2 * m - 1 - q) : (j & 1) === 1;
+        // Entrance: the other columns come in first and the lighter set follows as a group, P.lag seconds later.
+        const d0 = light ? P.lag : 0, sweep = entry === 2 ? 0.035 * (j - j0) : 0, g = c.introAt(d0 + sweep);
+        const lift = entry === 1 ? (1 - g) * 60 : 0;
+        const ty = mean + (top0 - mean) * P.relief - 480 + P.lift - P.ripple * mo * 18 * Math.sin(t * 0.4 + j * 0.35) - k * 70 + lift;
+        const yTop = entry === 3 ? lerp(bottom, Y(ty), g) : Y(ty);
         const h = yTop - bottom, w = P.w * u;
         if (h < w || Math.abs(x) - w > W / 2 + 4) continue;
-        const base = (0.6 + 0.4 * sd(st, j)) * (1 + 0.7 * k);
+        const a = entry === 3 || entry === 4 ? 1 : g;
+        if (a < 0.003) continue;
+        const base = (light ? 1 : P.dim * (0.85 + 0.3 * sd(st, j))) * (1 + 0.7 * k) * a, fade = P.fade * (light ? 0.35 : 1);
         pen.el(j, j & 1);
-        outline(pen, rrPath(x, (yTop + bottom) / 2, w, h, w / 2), 0, (s, xx, y) => base * (1 - P.fade * clamp((yTop - y) / (H * 0.6), 0, 1)));
+        // Diagonal sweep: a soft fade front that crosses the frame from the bottom left to the top right, point by point.
+        const diag = entry === 4 ? (xx, y) => c.introAt(d0 + 1.6 * clamp(0.5 * (xx / W + 0.5) + 0.5 * (y / H + 0.5), 0, 1)) : () => 1;
+        outline(pen, rrPath(x, (yTop + bottom) / 2, w, h, w / 2), 0, (s, xx, y) => base * diag(xx, y) * (1 - fade * clamp((yTop - y) / (H * 0.6), 0, 1)));
       }
     },
   },
@@ -1498,7 +1656,7 @@ Object.assign(CONCEPTS, {
         const grow = c.introAt(0.01 * i);
         pen.el(i);
         pen.poly(60, (s, o) => {
-          const q = 1 - (1 - s) * grow;
+          const q = s * grow; // the intro draws each line from the left edge in toward the point
           o.x = lerp(xL, pX, q);
           o.y = lerp(yL, pY, Math.pow(sstep(0, 1, q), P.shape));
           o.a = (lerp(0.15, 1, Math.pow(q, 1.5 * P.glow + 0.2))) * (0.85 + P.flow * mo * 1.4 * gauss((q - head) / 0.04));
@@ -1539,11 +1697,10 @@ Object.assign(CONCEPTS, {
         const x0 = P.cx + (f - 0.5) * P.spread, b = P.cx + (f - 0.5) * P.bundle;
         const y1 = P.neck, c1 = top + P.hold, c2 = y1 - P.pull;
         const lag = 0.12 * sd(st, i, 1); // small per-line offset so pulses ripple instead of marching in lockstep
-        const grow = c.introAt(0.01 * Math.abs(i - (n - 1) / 2));
-        const base = 0.7 + 0.3 * sd(st, i, 2);
+        const base = (0.7 + 0.3 * sd(st, i, 2)) * c.introAt(0); // the intro is a plain fade in, every line at once
         pen.el(i);
         pen.poly(90, (s, o) => {
-          const q = s * grow;
+          const q = s;
           let xa, ya;
           if (q < sc) {
             const v = q / sc, w = 1 - v;
@@ -1628,7 +1785,8 @@ Object.assign(CONCEPTS, {
     draw(c, pen, st, P) {
       const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
       const cx = P.cx + P.slide * mo * 60 * Math.sin(t * 0.25), amp = P.amp * (1 + 0.08 * P.slide * mo * Math.sin(t * 0.33));
-      const E = (xa) => P.mid + amp * (2 * sstep(0, 1, (xa - cx) / P.span + 0.5) - 1);
+      // Where the two sets meet (art y, down): the curve climbs to the right, so the bottom bars rise from left to right.
+      const E = (xa) => P.mid - amp * (2 * sstep(0, 1, (xa - cx) / P.span + 0.5) - 1);
       const topY = H / 2 + 30 * u, botY = -H / 2 - 30 * u, xa0 = (-W / 2 - c.ax) / u, xa1 = (W / 2 - c.ax) / u;
       let id = 0;
       for (const set of [0, 1]) {
@@ -1647,6 +1805,220 @@ Object.assign(CONCEPTS, {
           outline(pen, rrPath(x, (y0 + y1) / 2, w, h, w / 2), 0, (s, xx, y) => base * (1 - P.fade + P.fade * gauss((y - e) / (240 * u))));
         }
       }
+    },
+  },
+
+  coverage: {
+    label: 'Collateral Management Alt',
+    family: 'Collateral Management',
+    group: 'Roles',
+    blurb: 'A cluster of exposures wrapped in collateral buffers, with the outer line dashed like a margin threshold. The exposures drift and every buffer re-wraps around them, a check passes outward through the buffers, and the cursor acts as one more exposure the buffers stretch to cover.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      count: p(16, 3, 40, 1, 'Exposures'),
+      rx: p(140, 20, 280, 1, 'Cluster width'),
+      ry: p(200, 20, 400, 1, 'Cluster height'),
+      rings: p(4, 1, 8, 1, 'Buffers'),
+      gap: p(32, 6, 80, 1, 'Buffer gap'),
+      threshold: p(46, 0, 120, 1, 'Threshold gap'),
+      dash: p(10, 3, 30, 1, 'Dash length'),
+      dot: p(5, 0, 14, 0.5, 'Exposure dot'),
+      drift: p(1, 0, 3, 0.05, 'Drift'),
+      flow: p(1, 0, 3, 0.05, 'Light check'),
+      press: p(1, 0, 3, 0.05, 'Cursor pull'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count), R = Math.round(P.rings);
+      // Exposure points in art px (y down), each drifting on its own slow loop.
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const a = sd(st, i) * TAU, m = Math.sqrt(sd(st, i, 1)), w = 0.15 + 0.2 * sd(st, i, 2), ph = sd(st, i, 3) * TAU;
+        const dx = P.drift * mo * 22 * Math.sin(t * w + ph), dy = P.drift * mo * 22 * Math.cos(t * w * 0.8 + ph * 1.3);
+        pts.push([Math.cos(a) * m * P.rx + dx, Math.sin(a) * m * P.ry + dy]);
+      }
+      // The cursor is one more exposure. At rest it sits at the cluster's center, inside the hull, so it changes nothing.
+      const pull = clamp(P.press * c.md * c.mouseAmt * (0.4 + I), 0, 1);
+      const cx = (c.mx - c.ax) / u, cy = (c.ay - c.my) / u;
+      pts.push([cx * pull, cy * pull]);
+      // Offset contour by the support function: at each heading, the farthest point pushed out by d.
+      const K = 144, hull = (d) => {
+        const out = new Float64Array(K * 2);
+        for (let k = 0; k < K; k++) {
+          const th = k / K * TAU, ux = Math.cos(th), uy = Math.sin(th);
+          let best = pts[0], bv = -Infinity;
+          for (const q of pts) { const v = q[0] * ux + q[1] * uy; if (v > bv) { bv = v; best = q; } }
+          out[k * 2] = X(best[0] + ux * d); out[k * 2 + 1] = Y(best[1] + uy * d);
+        }
+        return out;
+      };
+      const head = frac(t * 0.07) * (R + 3) - 1.5; // a check of the buffers, moving outward ring by ring
+      const breathe = 1 + 0.06 * mo * Math.sin(t * 0.35);
+      for (let i = 0; i <= R + 1; i++) {
+        const last = i === R + 1;
+        const d = i === 0 ? 0 : (i <= R ? i * P.gap * breathe : R * P.gap * breathe + P.threshold);
+        const base = (i === 0 ? 0.35 : 1 - (i - 1) * 0.6 / Math.max(1, R)) * c.introAt(0.15 * i);
+        const lit = base * (1 + P.flow * mo * 1.2 * gauss((i - head) / 0.55));
+        const af = (x, y) => lit * (0.8 + 0.2 * Math.cos(Math.atan2(y - c.ay, x - c.ax) - Math.PI / 4)); // rim light from the top right
+        pen.el(i);
+        const H = hull(d);
+        if (!last) outline(pen, H, 0, (s, x, y) => af(x, y));
+        else { // the threshold, dashed: each short piece is on or off by where its middle falls along the outline
+          const on = Math.max(1, P.dash * u);
+          let acc = 0;
+          for (let k = 0; k < K; k++) {
+            const j = (k + 1) % K, x0 = H[k * 2], y0 = H[k * 2 + 1], x1 = H[j * 2], y1 = H[j * 2 + 1];
+            const L = Math.hypot(x1 - x0, y1 - y0), m = Math.max(1, Math.ceil(L / (on / 3)));
+            for (let q = 0; q < m; q++) {
+              if (Math.floor((acc + L * (q + 0.5) / m) / on) % 2) continue;
+              const xa = lerp(x0, x1, q / m), ya = lerp(y0, y1, q / m), xb = lerp(x0, x1, (q + 1) / m), yb = lerp(y0, y1, (q + 1) / m);
+              pen.seg(xa, ya, 0, af(xa, ya), xb, yb, 0, af(xb, yb));
+            }
+            acc += L;
+          }
+        }
+      }
+      // Exposure dots, which also flash as the check passes the inner hull.
+      const da = 0.9 * c.introAt(0) * (1 + P.flow * mo * 0.6 * gauss((0 - head) / 0.55));
+      for (let i = 0; i < n; i++) pen.point(X(pts[i][0]), Y(pts[i][1]), 0, P.dot, da);
+    },
+  },
+
+  alwaysOpen: {
+    label: 'Collateral Management 24/7',
+    family: 'Collateral Management',
+    group: 'Roles',
+    blurb: 'One day in New York time runs left to right, from 12 AM to midnight, with the hours markets are closed hatched. Other collateral moves only in open hours, easing to a stop at every band and waiting it out, while the USDM1 line through the center runs straight through, its burst markers moving around the clock. The band under the cursor brightens.',
+    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    params: {
+      orient: p(0, 0, 1, 1, 'Orientation', { options: { 'Horizontal (left to right)': 0, 'Vertical (top to bottom)': 1 } }),
+      clock: p(1, 0, 1, 1, 'Time scale', { options: { 'One day, 12 AM to midnight ET': 1, 'Free bands': 0 } }),
+      openH: p(9.5, 0, 24, 0.25, 'Market opens (hour ET)'),
+      closeH: p(16, 0, 24, 0.25, 'Market closes (hour ET)'),
+      ticks: p(1, 0, 1, 1, 'Hour ticks', { options: { Off: 0, On: 1 } }),
+      bands: p(2, 1, 6, 1, 'Closed bands'),
+      bandH: p(110, 30, 260, 1, 'Band width'),
+      phase: p(0, -300, 300, 1, 'Band offset'),
+      hatch: p(30, 8, 80, 1, 'Hatch gap'),
+      lanes: p(6, 0, 12, 1, 'Other lanes'),
+      spread: p(0.85, 0.2, 1, 0.01, 'Lane spread'),
+      double: p(1, 0, 1, 1, 'USDM1 line', { options: { Single: 0, Double: 1 } }),
+      markers: p(2, 1, 8, 1, 'USDM1 markers'),
+      mark: p(26, 10, 50, 1, 'USDM1 marker size'),
+      speed: p(1, 0, 4, 0.05, 'Speed'),
+      wait: p(3, 1, 8, 0.1, 'Wait at close (x, free bands)'),
+      lean: p(1, 0, 3, 0.05, 'Cursor glow'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
+      // Work in (along, across): along is the direction time runs, across spans the lanes.
+      // Horizontal: along is x (left to right). Vertical: along is y (top to bottom, art y runs down).
+      const hz = !P.orient;
+      const PX = (a, b) => X(hz ? a : b), PY = (a, b) => Y(hz ? b : a);
+      const S = (a1, b1, a2, b2, al1, al2 = al1) => pen.seg(PX(a1, b1), PY(a1, b1), 0, al1, PX(a2, b2), PY(a2, b2), 0, al2);
+      const half = (hz ? W : H) / 2 / u, ha = half + 30, hb = (hz ? H : W) / 2 / u + 40; // with a margin past the edges
+      const v = 60 * P.speed, clock = !!P.clock, hx = (h) => -half + clamp(h, 0, 24) / 24 * 2 * half;
+      const bands = [];
+      let waitLen; // how far USDM1 travels while the other collateral waits
+      if (clock) {
+        // One day across the frame: closed from midnight to the open, and from the close to midnight.
+        const xo = hx(Math.min(P.openH, P.closeH)), xc = hx(Math.max(P.openH, P.closeH));
+        bands.push([-ha - 60, xo], [xc, ha + 60]);
+        waitLen = 2 * half - (xc - xo);
+      } else {
+        const nb = Math.round(P.bands), per = 2 * half / nb;
+        for (let i = 0; i < nb; i++) { const m = -half + per * (i + 0.5) + P.phase; bands.push([m - P.bandH / 2, m + P.bandH / 2]); }
+        waitLen = P.bandH * P.wait;
+      }
+      const ca = hz ? (c.mx - c.ax) / u : (c.ay - c.my) / u, glow = P.lean * c.md * c.mouseAmt * (0.4 + I);
+      let id = 0;
+      // Closed bands: sparse diagonal hatching between two rules. The hatching creeps along slowly, like time passing.
+      const bandA = 0.85 * c.introAt(0), slide = (t * 4 * P.speed) % P.hatch;
+      for (const [a, b] of bands) {
+        const k = 1 + 1.4 * glow * gauss((ca - clamp(ca, a, b)) / 40);
+        pen.el(id++);
+        S(a, -hb, a, hb, 0.4 * bandA * k); S(b, -hb, b, hb, 0.4 * bandA * k);
+        pen.el(id++);
+        for (let x = -hb - (b - a) + slide; x < hb; x += P.hatch) S(b, x, a, x + (b - a), 0.35 * bandA * k);
+      }
+      // Hour ticks along both edges, longer every six hours, so the frame reads as a day.
+      if (clock && P.ticks) {
+        const e = hb - 40;
+        pen.el(id++);
+        for (let h = 0; h <= 24; h++) {
+          const x = hx(h), L = h % 6 ? 10 : 24;
+          S(x, -e, x, -e + L, 0.45 * bandA); S(x, e, x, e - L, 0.45 * bandA);
+        }
+      }
+      // Open stretches between the bands, in the order time runs.
+      const open = [];
+      let y0 = -ha;
+      for (const [a, b] of bands) { if (a > y0) open.push([y0, a, true]); y0 = Math.max(y0, b); }
+      if (y0 < ha) open.push([y0, ha, false]);
+      // USDM1 runs through the center; the other lanes sit evenly on both sides of it.
+      const nl = Math.round(P.lanes), sp = P.spread * 2 * (hb - 40) / (nl + 1), left = Math.floor(nl / 2), lanes = [];
+      for (let k = 0; k < nl; k++) lanes.push(k < left ? -(k + 1) * sp : (k - left + 1) * sp);
+      const laneA = c.introAt(0.2);
+      lanes.forEach((x, i) => {
+        const a = (0.4 + 0.25 * sd(st, i)) * laneA;
+        pen.el(id++);
+        for (const [ya, yb, stops] of open) {
+          S(ya, x, yb, x, a);
+          if (stops) S(yb, x - 12, yb, x + 12, a);
+        }
+      });
+      const ua = c.introAt(0.4);
+      pen.el(id++);
+      for (const dx of P.double ? [-2.5, 2.5] : [0]) S(-ha, dx, ha, dx, ua);
+      // Markers sit on a background disc so the line doesn't show through them. Each marker keeps a fixed id and is never
+      // an "every other" shape, so the stroke fill can't flip between solid and gradient as markers come and go.
+      const base = id, mark = (slot, x, y, r, a) => {
+        pen.el(base + slot, false);
+        pen.disc(PX(y, x), PY(y, x), 0, r * u); ring(pen, PX(y, x), PY(y, x), 2 * r * u, 0, () => a);
+      };
+      // USDM1 markers carry the burst from the brand mark (always upright), at a steady pace through every band.
+      const R = P.mark, sb = 0.72 * R / 15, span = 2 * ha + 2 * R, nm = Math.round(P.markers);
+      for (let k = 0; k < nm; k++) {
+        const y = -ha - R + frac(t * v / span + k / nm) * span, a = ua * (1 + 0.4 * mo);
+        mark(k, 0, y, R, a);
+        const cx = hz ? y : 0, cy = hz ? 0 : y;
+        for (const [deg, r0, r1] of BURST) {
+          const th = deg * Math.PI / 180, ux = Math.cos(th), uy = Math.sin(th);
+          pen.seg(X(cx + ux * r0 * sb), Y(cy + uy * r0 * sb), 0, a, X(cx + ux * r1 * sb), Y(cy + uy * r1 * sb), 0, a);
+        }
+      }
+      // Other markers ease to a stop just short of each band, wait it out, then shrink away while a new one grows on the
+      // far side and eases off again. Shrinking (not fading) keeps each marker's background disc the same size as its ring,
+      // and stopping short keeps markers off the band rule and stop tick, so neither ever gets cut into.
+      // They never outpace USDM1: each stretch takes long enough that the top speed matches the USDM1 markers.
+      if (v <= 0) return;
+      const r = 8, pad = r + 6, waitT = waitLen / v, swapT = Math.min(0.9, waitT * 0.45);
+      const runs = open.map(([ya, yb, stops], k) => {
+        const ein = k > 0 || ya > -ha + 1, eout = stops;
+        const from = ein ? ya + pad : ya, to = eout ? yb - pad : yb;
+        return { from, to, stops, ein, eout, T: Math.max(0, to - from) / v * (ein && eout ? 1.5 : ein || eout ? 2 : 1) };
+      });
+      const ease = (x, ein, eout) => (ein && eout ? x * x * (3 - 2 * x) : ein ? x * x : eout ? x * (2 - x) : x);
+      let cycle = 0; for (const s of runs) cycle += s.T + (s.stops ? waitT : 0);
+      const a = laneA * 0.8;
+      lanes.forEach((x, i) => {
+        let tau = frac(t / cycle + sd(st, i, 1)) * cycle;
+        for (let k = 0; k < runs.length; k++) {
+          const s = runs[k];
+          if (tau < s.T) { mark(nm + i * 2, x, s.from + (s.to - s.from) * ease(tau / s.T, s.ein, s.eout), r, a); break; }
+          tau -= s.T;
+          if (!s.stops) continue;
+          if (tau < waitT) {
+            const f = sstep(waitT - swapT, waitT, tau);
+            if (f < 0.999) mark(nm + i * 2, x, s.to, r * (1 - f), a);
+            const next = runs[k + 1] || (clock ? runs[0] : null); // on the clock, the next stretch is tomorrow's open
+            if (f > 0.001 && next) mark(nm + i * 2 + 1, x, next.from, r * f, a);
+            break;
+          }
+          tau -= waitT;
+        }
+      });
     },
   },
 
@@ -1749,6 +2121,8 @@ export function normalize(cfg = {}) {
   for (const c of [out, out.portrait]) if (c) c.look.width = Math.min(3, Math.max(1, +c.look.width || 1));
   // The vignette is retired: always off, even for configs saved with one.
   for (const c of [out, out.portrait]) if (c) c.look.vignette = 0;
+  // Roles and Institutions (tall-only art beside the copy) never use the legibility band, even in older saved configs.
+  if (CONCEPTS[concept].only === 'tall') for (const c of [out, out.portrait]) if (c) c.look.band = 0;
   return out;
 }
 // Effective settings for one orientation.
@@ -1773,13 +2147,19 @@ vec4 shade(float a){
   float al = a * uOpacity * m * v * (1.0 + g * 2.2) * uIntro;
   return vec4(mix(uColor, uAccent, clamp(g * 0.8, 0.0, 1.0)), clamp(al, 0.0, 1.0));
 }`;
-const LINE_VS = /* glsl */`
-attribute float aA; varying float vA; uniform vec2 uOffset; uniform vec2 uRes;
-void main(){ vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); p.xy += uOffset * 2.0 / uRes * p.w; gl_Position = p; vA = aA; }`;
+// Stacking: depth comes from a shape's layer, not its position, so a fill (painted in the background) hides the
+// lines of every shape below it. A shape's own lines sit just in front of its fill. Layer -1 sits behind all fills.
+const DEP = /* glsl */`float dep(float k){ return k < 0.0 ? 0.99 : 0.9 - min(k, 3.5e5) * 2.5e-6; }`;
+const LINE_VS = DEP + /* glsl */`
+attribute float aA; attribute float aK; varying float vA; uniform vec2 uOffset; uniform vec2 uRes;
+void main(){ vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); p.xy += uOffset * 2.0 / uRes * p.w; p.z = (dep(aK) - 1e-6) * p.w; gl_Position = p; vA = aA; }`;
+const FILL_VS = DEP + /* glsl */`
+attribute float aK;
+void main(){ vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); p.z = dep(aK) * p.w; gl_Position = p; }`;
 // Wider strokes: each segment is a quad expanded in screen space. position.x picks the end (0 start, 1 end),
 // position.y the side. Below 1 device pixel the quad stays 1px wide and fades instead, so thin widths stay smooth.
-const QLINE_VS = /* glsl */`
-attribute vec3 iA; attribute vec3 iB; attribute vec3 iP; attribute vec3 iN; attribute float iAA; attribute float iAB;
+const QLINE_VS = DEP + /* glsl */`
+attribute vec3 iA; attribute vec3 iB; attribute vec3 iP; attribute vec3 iN; attribute float iAA; attribute float iAB; attribute float iK;
 uniform vec2 uOffset; uniform vec2 uRes; uniform float uWidth; varying float vA;
 vec2 scr(vec3 q){ vec4 c = projectionMatrix * modelViewMatrix * vec4(q, 1.0); return c.xy / c.w * uRes * 0.5; }
 vec2 nrm(vec2 d){ float l = length(d); return l > 1e-4 ? vec2(-d.y, d.x) / l : vec2(0.0); }
@@ -1796,6 +2176,7 @@ void main(){
     if (k > 0.25) off = m * position.y * hw / k;
   }
   p.xy += (off + uOffset) * 2.0 / uRes * p.w;
+  p.z = (dep(iK) - 1e-6) * p.w;
   gl_Position = p;
   vA = (st ? iAA : iAB) * min(uWidth, 1.0);
 }`;
@@ -1834,7 +2215,7 @@ void main(){
 
 function lineMat(blend, vs = LINE_VS) {
   return new THREE.ShaderMaterial({
-    vertexShader: vs, fragmentShader: LINE_FS, transparent: true, depthTest: false, depthWrite: false,
+    vertexShader: vs, fragmentShader: LINE_FS, transparent: true, depthTest: true, depthWrite: false,
     blending: blend === 'add' ? THREE.AdditiveBlending : THREE.NormalBlending,
     uniforms: {
       uRes: { value: new THREE.Vector2() }, uMouse: { value: new THREE.Vector2(-1e4, -1e4) }, uOffset: { value: new THREE.Vector2() },
@@ -1888,13 +2269,19 @@ export function createHero(el, config = {}, options = {}) {
   const bindL = () => {
     lGeo.setAttribute('position', new THREE.BufferAttribute(pen.L.pos, 3).setUsage(THREE.DynamicDrawUsage));
     lGeo.setAttribute('aA', new THREE.BufferAttribute(pen.L.a, 1).setUsage(THREE.DynamicDrawUsage));
+    lGeo.setAttribute('aK', new THREE.BufferAttribute(pen.L.k, 1).setUsage(THREE.DynamicDrawUsage));
+  };
+  const fGeo = new THREE.BufferGeometry();
+  const bindF = () => {
+    fGeo.setAttribute('position', new THREE.BufferAttribute(pen.F.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    fGeo.setAttribute('aK', new THREE.BufferAttribute(pen.F.k, 1).setUsage(THREE.DynamicDrawUsage));
   };
   const bindP = () => {
     pGeo.setAttribute('position', new THREE.BufferAttribute(pen.P.pos, 3).setUsage(THREE.DynamicDrawUsage));
     pGeo.setAttribute('aA', new THREE.BufferAttribute(pen.P.a, 1).setUsage(THREE.DynamicDrawUsage));
     pGeo.setAttribute('aS', new THREE.BufferAttribute(pen.P.s, 1).setUsage(THREE.DynamicDrawUsage));
   };
-  bindL(); bindP();
+  bindL(); bindP(); bindF();
   let backMat = lineMat(cfg.look.blend), frontMat = lineMat(cfg.look.blend);
   const back = new THREE.LineSegments(lGeo, backMat), front = new THREE.LineSegments(lGeo, frontMat);
   const ptMat = new THREE.ShaderMaterial({ vertexShader: PT_VS, fragmentShader: PT_FS, transparent: true, depthTest: false, depthWrite: false, uniforms: { ...THREE.UniformsUtils.clone(frontMat.uniforms), uDpr: { value: 1 } } });
@@ -1903,7 +2290,7 @@ export function createHero(el, config = {}, options = {}) {
   const qGeo = new THREE.InstancedBufferGeometry();
   qGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, -1, 0, 0, 1, 0, 1, -1, 0, 1, 1, 0], 3));
   qGeo.setIndex([0, 2, 1, 1, 2, 3]);
-  let qPos = null, qA = null, qN = null;
+  let qPos = null, qA = null, qN = null, qK = null;
   const bindQ = () => {
     qPos = new THREE.InstancedInterleavedBuffer(pen.L.pos, 6).setUsage(THREE.DynamicDrawUsage);
     qA = new THREE.InstancedInterleavedBuffer(pen.L.a, 2).setUsage(THREE.DynamicDrawUsage);
@@ -1911,6 +2298,8 @@ export function createHero(el, config = {}, options = {}) {
     qGeo.setAttribute('iB', new THREE.InterleavedBufferAttribute(qPos, 3, 3));
     qGeo.setAttribute('iAA', new THREE.InterleavedBufferAttribute(qA, 1, 0));
     qGeo.setAttribute('iAB', new THREE.InterleavedBufferAttribute(qA, 1, 1));
+    qK = new THREE.InstancedInterleavedBuffer(pen.L.k, 2).setUsage(THREE.DynamicDrawUsage);
+    qGeo.setAttribute('iK', new THREE.InterleavedBufferAttribute(qK, 1, 0));
     qN = new THREE.InstancedInterleavedBuffer(pen.L.nb, 6).setUsage(THREE.DynamicDrawUsage);
     qGeo.setAttribute('iP', new THREE.InterleavedBufferAttribute(qN, 3, 0));
     qGeo.setAttribute('iN', new THREE.InterleavedBufferAttribute(qN, 3, 3));
@@ -1919,7 +2308,10 @@ export function createHero(el, config = {}, options = {}) {
   const qBackMat = lineMat(cfg.look.blend, QLINE_VS), qFrontMat = lineMat(cfg.look.blend, QLINE_VS);
   const qBack = new THREE.Mesh(qGeo, qBackMat), qFront = new THREE.Mesh(qGeo, qFrontMat);
   const allMats = [backMat, frontMat, qBackMat, qFrontMat, ptMat];
-  [[back, 0], [qBack, 0], [front, 1], [qFront, 1], [points, 2]].forEach(([o, i]) => { o.frustumCulled = false; o.renderOrder = i; root.add(o); });
+  // Fills paint the background itself (same shader and uniforms), so grain, glow and vignette line up exactly.
+  const fillMat = new THREE.ShaderMaterial({ vertexShader: FILL_VS, fragmentShader: BG_FS, uniforms: bgMat.uniforms, depthTest: true, depthWrite: true });
+  const fills = new THREE.Mesh(fGeo, fillMat);
+  [[fills, -1], [back, 0], [qBack, 0], [front, 1], [qFront, 1], [points, 2]].forEach(([o, i]) => { o.frustumCulled = false; o.renderOrder = i; root.add(o); });
   const thick = () => (cfg.look.width || 1) > 1;
 
   let W = 1, H = 1, dpr = 1, state = null, concept = null, settled = false, artN = 0;
@@ -2027,8 +2419,11 @@ export function createHero(el, config = {}, options = {}) {
     if (cfg.grid.on) drawGrid(ctx, pen, cfg.grid);
     const wide = thick();
     if (pen.grewL) { bindL(); bindQ(); pen.grewL = false; }
-    else if (wide) { qPos.needsUpdate = true; qA.needsUpdate = true; qN.needsUpdate = true; }
-    else { lGeo.attributes.position.needsUpdate = true; lGeo.attributes.aA.needsUpdate = true; }
+    else if (wide) { qPos.needsUpdate = true; qA.needsUpdate = true; qN.needsUpdate = true; qK.needsUpdate = true; }
+    else { lGeo.attributes.position.needsUpdate = true; lGeo.attributes.aA.needsUpdate = true; lGeo.attributes.aK.needsUpdate = true; }
+    if (pen.grewF) { bindF(); pen.grewF = false; } else if (pen.F.n) { fGeo.attributes.position.needsUpdate = true; fGeo.attributes.aK.needsUpdate = true; }
+    fGeo.setDrawRange(0, pen.F.n); fills.visible = pen.F.n > 0;
+    fillMat.colorWrite = !clearBg; // transparent stills: fills still hide what is behind them, but leave the pixels clear
     qGeo.instanceCount = pen.L.n / 2;
     if (pen.grewP) { bindP(); pen.grewP = false; } else { pGeo.attributes.position.needsUpdate = true; pGeo.attributes.aA.needsUpdate = true; pGeo.attributes.aS.needsUpdate = true; }
     lGeo.setDrawRange(0, pen.L.n); pGeo.setDrawRange(0, pen.P.n);
@@ -2164,7 +2559,7 @@ export function createHero(el, config = {}, options = {}) {
       document.documentElement.removeEventListener('pointerleave', onLeave);
       reduceMQ && reduceMQ.removeEventListener && reduceMQ.removeEventListener('change', sync);
       ro.disconnect(); io && io.disconnect();
-      lGeo.dispose(); pGeo.dispose(); qGeo.dispose(); allMats.forEach((m) => m.dispose()); bgMat.dispose(); bandMat.dispose();
+      lGeo.dispose(); pGeo.dispose(); qGeo.dispose(); fGeo.dispose(); fillMat.dispose(); allMats.forEach((m) => m.dispose()); bgMat.dispose(); bandMat.dispose();
       renderer.dispose(); renderer.forceContextLoss(); canvas.remove();
     },
   };
