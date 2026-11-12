@@ -1216,50 +1216,8 @@ Object.assign(CONCEPTS, {
     },
   },
 
-  prime: {
-    label: 'Prime Brokers',
-    family: 'Prime Brokers',
-    group: 'Institutions',
-    blurb: 'Lines that leave one narrow source and fan out across the frame, like access spreading from a prime broker. Pulses run down the lines, the fan slowly widens and narrows, and the cursor spreads it: wider toward the edges, tighter at the center.',
-    layout: { wide: { x: 0.5, y: 0.56, s: 1.3 }, tall: SPLIT },
-    params: {
-      perSide: p(9, 1, 40, 1, 'Lines per side'),
-      topGap: p(19.5, 0, 100, 0.1, 'Top spacing'),
-      botGap: p(51.25, 0, 300, 0.05, 'Bottom spacing'),
-      cross: p(-9.75, -60, 60, 0.25, 'Center cross'), // negative keeps the two center lines apart (half the top spacing), so they never overlap
-      botCenter: p(38, -200, 200, 1, 'Bottom center gap'),
-      top: p(-214, -900, 900, 1, 'Top Y'),
-      bottom: p(630, -900, 1400, 1, 'Bottom Y'),
-      bend: p(1.35, 0.5, 3, 0.01, 'Flare'),
-      fadeIn: p(0.25, 0, 1, 0.01, 'Top fade'),
-      sway: p(1, 0, 4, 0.05, 'Breathe'),
-      pulses: p(1, 0, 3, 0.05, 'Pulses'),
-      lean: p(1, 0, 3, 0.05, 'Cursor spread'),
-    },
-    init(c, P, rnd) { return seeds(rnd); },
-    draw(c, pen, st, P) {
-      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.perSide);
-      const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
-      // The fan only widens and narrows, mirrored about the center line: a slow breath, plus the cursor
-      // spreading it wider toward either edge and squeezing it at the center. It never swings sideways.
-      const spread = 1 + P.sway * mo * 0.08 * Math.sin(t * 0.25) + lean * 0.2 * (Math.abs(c.mn.x) * 2 - 1);
-      let id = 0;
-      for (const sg of [-1, 1]) for (let j = 0; j < n; j++) {
-        const xt = sg * (P.topGap * j - P.cross), xb = sg * (P.botGap * j + P.botCenter) * spread;
-        const head = frac(t * 0.07 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg));
-        const base = 0.7 + 0.3 * sd(st, j, sg + 4), grow = c.introAt(0.04 * j);
-        pen.el(id++);
-        pen.poly(40, (s, o) => {
-          const q = 1 - (1 - s) * grow; // the intro grows each line up from the bottom
-          o.x = X(lerp(xt, xb, Math.pow(q, P.bend))); o.y = Y(lerp(P.top, P.bottom, q));
-          o.a = base * sstep(0, Math.max(0.001, P.fadeIn), q) * (0.85 + P.pulses * mo * 1.6 * gauss((q - head) / 0.04));
-        });
-      }
-    },
-  },
-
   primeAlt: {
-    label: 'Prime Brokers Alt',
+    label: 'Prime Brokers',
     family: 'Prime Brokers',
     group: 'Institutions',
     blurb: 'Slim slats that hang from one flat top edge and lean in toward a point below the frame, laid out as in the Figma hero. Light runs down the slats, the set slowly widens and narrows, and the cursor spreads it: wider toward the edges, tighter at the center.',
@@ -1808,225 +1766,11 @@ Object.assign(CONCEPTS, {
     },
   },
 
-  coverage: {
-    label: 'Collateral Management Alt',
-    family: 'Collateral Management',
-    group: 'Roles',
-    blurb: 'A cluster of exposures wrapped in collateral buffers, with the outer line dashed like a margin threshold. The exposures drift and every buffer re-wraps around them, a check passes outward through the buffers, and the cursor acts as one more exposure the buffers stretch to cover.',
-    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
-    params: {
-      count: p(16, 3, 40, 1, 'Exposures'),
-      rx: p(140, 20, 280, 1, 'Cluster width'),
-      ry: p(200, 20, 400, 1, 'Cluster height'),
-      rings: p(4, 1, 8, 1, 'Buffers'),
-      gap: p(32, 6, 80, 1, 'Buffer gap'),
-      threshold: p(46, 0, 120, 1, 'Threshold gap'),
-      dash: p(10, 3, 30, 1, 'Dash length'),
-      dot: p(5, 0, 14, 0.5, 'Exposure dot'),
-      drift: p(1, 0, 3, 0.05, 'Drift'),
-      flow: p(1, 0, 3, 0.05, 'Light check'),
-      press: p(1, 0, 3, 0.05, 'Cursor pull'),
-    },
-    init(c, P, rnd) { return seeds(rnd); },
-    draw(c, pen, st, P) {
-      const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count), R = Math.round(P.rings);
-      // Exposure points in art px (y down), each drifting on its own slow loop.
-      const pts = [];
-      for (let i = 0; i < n; i++) {
-        const a = sd(st, i) * TAU, m = Math.sqrt(sd(st, i, 1)), w = 0.15 + 0.2 * sd(st, i, 2), ph = sd(st, i, 3) * TAU;
-        const dx = P.drift * mo * 22 * Math.sin(t * w + ph), dy = P.drift * mo * 22 * Math.cos(t * w * 0.8 + ph * 1.3);
-        pts.push([Math.cos(a) * m * P.rx + dx, Math.sin(a) * m * P.ry + dy]);
-      }
-      // The cursor is one more exposure. At rest it sits at the cluster's center, inside the hull, so it changes nothing.
-      const pull = clamp(P.press * c.md * c.mouseAmt * (0.4 + I), 0, 1);
-      const cx = (c.mx - c.ax) / u, cy = (c.ay - c.my) / u;
-      pts.push([cx * pull, cy * pull]);
-      // Offset contour by the support function: at each heading, the farthest point pushed out by d.
-      const K = 144, hull = (d) => {
-        const out = new Float64Array(K * 2);
-        for (let k = 0; k < K; k++) {
-          const th = k / K * TAU, ux = Math.cos(th), uy = Math.sin(th);
-          let best = pts[0], bv = -Infinity;
-          for (const q of pts) { const v = q[0] * ux + q[1] * uy; if (v > bv) { bv = v; best = q; } }
-          out[k * 2] = X(best[0] + ux * d); out[k * 2 + 1] = Y(best[1] + uy * d);
-        }
-        return out;
-      };
-      const head = frac(t * 0.07) * (R + 3) - 1.5; // a check of the buffers, moving outward ring by ring
-      const breathe = 1 + 0.06 * mo * Math.sin(t * 0.35);
-      for (let i = 0; i <= R + 1; i++) {
-        const last = i === R + 1;
-        const d = i === 0 ? 0 : (i <= R ? i * P.gap * breathe : R * P.gap * breathe + P.threshold);
-        const base = (i === 0 ? 0.35 : 1 - (i - 1) * 0.6 / Math.max(1, R)) * c.introAt(0.15 * i);
-        const lit = base * (1 + P.flow * mo * 1.2 * gauss((i - head) / 0.55));
-        const af = (x, y) => lit * (0.8 + 0.2 * Math.cos(Math.atan2(y - c.ay, x - c.ax) - Math.PI / 4)); // rim light from the top right
-        pen.el(i);
-        const H = hull(d);
-        if (!last) outline(pen, H, 0, (s, x, y) => af(x, y));
-        else { // the threshold, dashed: each short piece is on or off by where its middle falls along the outline
-          const on = Math.max(1, P.dash * u);
-          let acc = 0;
-          for (let k = 0; k < K; k++) {
-            const j = (k + 1) % K, x0 = H[k * 2], y0 = H[k * 2 + 1], x1 = H[j * 2], y1 = H[j * 2 + 1];
-            const L = Math.hypot(x1 - x0, y1 - y0), m = Math.max(1, Math.ceil(L / (on / 3)));
-            for (let q = 0; q < m; q++) {
-              if (Math.floor((acc + L * (q + 0.5) / m) / on) % 2) continue;
-              const xa = lerp(x0, x1, q / m), ya = lerp(y0, y1, q / m), xb = lerp(x0, x1, (q + 1) / m), yb = lerp(y0, y1, (q + 1) / m);
-              pen.seg(xa, ya, 0, af(xa, ya), xb, yb, 0, af(xb, yb));
-            }
-            acc += L;
-          }
-        }
-      }
-      // Exposure dots, which also flash as the check passes the inner hull.
-      const da = 0.9 * c.introAt(0) * (1 + P.flow * mo * 0.6 * gauss((0 - head) / 0.55));
-      for (let i = 0; i < n; i++) pen.point(X(pts[i][0]), Y(pts[i][1]), 0, P.dot, da);
-    },
-  },
-
-  alwaysOpen: {
-    label: 'Collateral Management 24/7',
-    family: 'Collateral Management',
-    group: 'Roles',
-    blurb: 'One day in New York time runs left to right, from 12 AM to midnight, with the hours markets are closed hatched. Other collateral moves only in open hours, easing to a stop at every band and waiting it out, while the USDM1 line through the center runs straight through, its burst markers moving around the clock. The band under the cursor brightens.',
-    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
-    params: {
-      orient: p(0, 0, 1, 1, 'Orientation', { options: { 'Horizontal (left to right)': 0, 'Vertical (top to bottom)': 1 } }),
-      clock: p(1, 0, 1, 1, 'Time scale', { options: { 'One day, 12 AM to midnight ET': 1, 'Free bands': 0 } }),
-      openH: p(9.5, 0, 24, 0.25, 'Market opens (hour ET)'),
-      closeH: p(16, 0, 24, 0.25, 'Market closes (hour ET)'),
-      ticks: p(1, 0, 1, 1, 'Hour ticks', { options: { Off: 0, On: 1 } }),
-      bands: p(2, 1, 6, 1, 'Closed bands'),
-      bandH: p(110, 30, 260, 1, 'Band width'),
-      phase: p(0, -300, 300, 1, 'Band offset'),
-      hatch: p(30, 8, 80, 1, 'Hatch gap'),
-      lanes: p(6, 0, 12, 1, 'Other lanes'),
-      spread: p(0.85, 0.2, 1, 0.01, 'Lane spread'),
-      double: p(1, 0, 1, 1, 'USDM1 line', { options: { Single: 0, Double: 1 } }),
-      markers: p(2, 1, 8, 1, 'USDM1 markers'),
-      mark: p(26, 10, 50, 1, 'USDM1 marker size'),
-      speed: p(1, 0, 4, 0.05, 'Speed'),
-      wait: p(3, 1, 8, 0.1, 'Wait at close (x, free bands)'),
-      lean: p(1, 0, 3, 0.05, 'Cursor glow'),
-    },
-    init(c, P, rnd) { return seeds(rnd); },
-    draw(c, pen, st, P) {
-      const { u, t, I, W, H } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I);
-      // Work in (along, across): along is the direction time runs, across spans the lanes.
-      // Horizontal: along is x (left to right). Vertical: along is y (top to bottom, art y runs down).
-      const hz = !P.orient;
-      const PX = (a, b) => X(hz ? a : b), PY = (a, b) => Y(hz ? b : a);
-      const S = (a1, b1, a2, b2, al1, al2 = al1) => pen.seg(PX(a1, b1), PY(a1, b1), 0, al1, PX(a2, b2), PY(a2, b2), 0, al2);
-      const half = (hz ? W : H) / 2 / u, ha = half + 30, hb = (hz ? H : W) / 2 / u + 40; // with a margin past the edges
-      const v = 60 * P.speed, clock = !!P.clock, hx = (h) => -half + clamp(h, 0, 24) / 24 * 2 * half;
-      const bands = [];
-      let waitLen; // how far USDM1 travels while the other collateral waits
-      if (clock) {
-        // One day across the frame: closed from midnight to the open, and from the close to midnight.
-        const xo = hx(Math.min(P.openH, P.closeH)), xc = hx(Math.max(P.openH, P.closeH));
-        bands.push([-ha - 60, xo], [xc, ha + 60]);
-        waitLen = 2 * half - (xc - xo);
-      } else {
-        const nb = Math.round(P.bands), per = 2 * half / nb;
-        for (let i = 0; i < nb; i++) { const m = -half + per * (i + 0.5) + P.phase; bands.push([m - P.bandH / 2, m + P.bandH / 2]); }
-        waitLen = P.bandH * P.wait;
-      }
-      const ca = hz ? (c.mx - c.ax) / u : (c.ay - c.my) / u, glow = P.lean * c.md * c.mouseAmt * (0.4 + I);
-      let id = 0;
-      // Closed bands: sparse diagonal hatching between two rules. The hatching creeps along slowly, like time passing.
-      const bandA = 0.85 * c.introAt(0), slide = (t * 4 * P.speed) % P.hatch;
-      for (const [a, b] of bands) {
-        const k = 1 + 1.4 * glow * gauss((ca - clamp(ca, a, b)) / 40);
-        pen.el(id++);
-        S(a, -hb, a, hb, 0.4 * bandA * k); S(b, -hb, b, hb, 0.4 * bandA * k);
-        pen.el(id++);
-        for (let x = -hb - (b - a) + slide; x < hb; x += P.hatch) S(b, x, a, x + (b - a), 0.35 * bandA * k);
-      }
-      // Hour ticks along both edges, longer every six hours, so the frame reads as a day.
-      if (clock && P.ticks) {
-        const e = hb - 40;
-        pen.el(id++);
-        for (let h = 0; h <= 24; h++) {
-          const x = hx(h), L = h % 6 ? 10 : 24;
-          S(x, -e, x, -e + L, 0.45 * bandA); S(x, e, x, e - L, 0.45 * bandA);
-        }
-      }
-      // Open stretches between the bands, in the order time runs.
-      const open = [];
-      let y0 = -ha;
-      for (const [a, b] of bands) { if (a > y0) open.push([y0, a, true]); y0 = Math.max(y0, b); }
-      if (y0 < ha) open.push([y0, ha, false]);
-      // USDM1 runs through the center; the other lanes sit evenly on both sides of it.
-      const nl = Math.round(P.lanes), sp = P.spread * 2 * (hb - 40) / (nl + 1), left = Math.floor(nl / 2), lanes = [];
-      for (let k = 0; k < nl; k++) lanes.push(k < left ? -(k + 1) * sp : (k - left + 1) * sp);
-      const laneA = c.introAt(0.2);
-      lanes.forEach((x, i) => {
-        const a = (0.4 + 0.25 * sd(st, i)) * laneA;
-        pen.el(id++);
-        for (const [ya, yb, stops] of open) {
-          S(ya, x, yb, x, a);
-          if (stops) S(yb, x - 12, yb, x + 12, a);
-        }
-      });
-      const ua = c.introAt(0.4);
-      pen.el(id++);
-      for (const dx of P.double ? [-2.5, 2.5] : [0]) S(-ha, dx, ha, dx, ua);
-      // Markers sit on a background disc so the line doesn't show through them. Each marker keeps a fixed id and is never
-      // an "every other" shape, so the stroke fill can't flip between solid and gradient as markers come and go.
-      const base = id, mark = (slot, x, y, r, a) => {
-        pen.el(base + slot, false);
-        pen.disc(PX(y, x), PY(y, x), 0, r * u); ring(pen, PX(y, x), PY(y, x), 2 * r * u, 0, () => a);
-      };
-      // USDM1 markers carry the burst from the brand mark (always upright), at a steady pace through every band.
-      const R = P.mark, sb = 0.72 * R / 15, span = 2 * ha + 2 * R, nm = Math.round(P.markers);
-      for (let k = 0; k < nm; k++) {
-        const y = -ha - R + frac(t * v / span + k / nm) * span, a = ua * (1 + 0.4 * mo);
-        mark(k, 0, y, R, a);
-        const cx = hz ? y : 0, cy = hz ? 0 : y;
-        for (const [deg, r0, r1] of BURST) {
-          const th = deg * Math.PI / 180, ux = Math.cos(th), uy = Math.sin(th);
-          pen.seg(X(cx + ux * r0 * sb), Y(cy + uy * r0 * sb), 0, a, X(cx + ux * r1 * sb), Y(cy + uy * r1 * sb), 0, a);
-        }
-      }
-      // Other markers ease to a stop just short of each band, wait it out, then shrink away while a new one grows on the
-      // far side and eases off again. Shrinking (not fading) keeps each marker's background disc the same size as its ring,
-      // and stopping short keeps markers off the band rule and stop tick, so neither ever gets cut into.
-      // They never outpace USDM1: each stretch takes long enough that the top speed matches the USDM1 markers.
-      if (v <= 0) return;
-      const r = 8, pad = r + 6, waitT = waitLen / v, swapT = Math.min(0.9, waitT * 0.45);
-      const runs = open.map(([ya, yb, stops], k) => {
-        const ein = k > 0 || ya > -ha + 1, eout = stops;
-        const from = ein ? ya + pad : ya, to = eout ? yb - pad : yb;
-        return { from, to, stops, ein, eout, T: Math.max(0, to - from) / v * (ein && eout ? 1.5 : ein || eout ? 2 : 1) };
-      });
-      const ease = (x, ein, eout) => (ein && eout ? x * x * (3 - 2 * x) : ein ? x * x : eout ? x * (2 - x) : x);
-      let cycle = 0; for (const s of runs) cycle += s.T + (s.stops ? waitT : 0);
-      const a = laneA * 0.8;
-      lanes.forEach((x, i) => {
-        let tau = frac(t / cycle + sd(st, i, 1)) * cycle;
-        for (let k = 0; k < runs.length; k++) {
-          const s = runs[k];
-          if (tau < s.T) { mark(nm + i * 2, x, s.from + (s.to - s.from) * ease(tau / s.T, s.ein, s.eout), r, a); break; }
-          tau -= s.T;
-          if (!s.stops) continue;
-          if (tau < waitT) {
-            const f = sstep(waitT - swapT, waitT, tau);
-            if (f < 0.999) mark(nm + i * 2, x, s.to, r * (1 - f), a);
-            const next = runs[k + 1] || (clock ? runs[0] : null); // on the clock, the next stretch is tomorrow's open
-            if (f > 0.001 && next) mark(nm + i * 2 + 1, x, next.from, r * f, a);
-            break;
-          }
-          tau -= waitT;
-        }
-      });
-    },
-  },
-
   alwaysOpenTrim: {
-    label: 'Collateral Management 24/7 Trimmed',
+    label: 'Collateral Management',
     family: 'Collateral Management',
     group: 'Roles',
-    blurb: 'A pared-back 24/7. One day in New York time runs left to right with the closed hours hatched. A single clock drives everything: the USDM1 burst marker tracks the time of day around the clock, while the market markers move with it only in open hours and stop at the close. The band under the cursor brightens.',
+    blurb: 'Collateral that moves around the clock. One day in New York time runs left to right with the closed hours hatched. A single clock drives everything: the USDM1 burst marker tracks the time of day around the clock, while the market markers move with it only in open hours and stop at the close. The band under the cursor brightens.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
     params: {
       orient: p(0, 0, 1, 1, 'Orientation', { options: { 'Horizontal (left to right)': 0, 'Vertical (top to bottom)': 1 } }),
@@ -2077,10 +1821,11 @@ Object.assign(CONCEPTS, {
         pen.el(base + slot, false);
         pen.disc(PX(a0, b0), PY(a0, b0), 0, r * u); ring(pen, PX(a0, b0), PY(a0, b0), 2 * r * u, 0, () => a);
       };
-      // USDM1: a ring holding the brand burst, always upright.
+      // USDM1: a ring holding the brand burst, always upright. Left out of the poster (the line stays): the marker is
+      // the one part that ghosts when the live canvas fades in over the still.
       const a = ua * (1 + 0.4 * mo), sb = 0.72 * R / 15, bx = hz ? now : 0, by = hz ? 0 : now;
-      mark(0, now, 0, R, a);
-      for (const [deg, r0, r1] of BURST) {
+      if (!c.poster) mark(0, now, 0, R, a);
+      if (!c.poster) for (const [deg, r0, r1] of BURST) {
         const th = deg * Math.PI / 180, ux = Math.cos(th), uy = Math.sin(th);
         pen.seg(X(bx + ux * r0 * sb), Y(by + uy * r0 * sb), 0, a, X(bx + ux * r1 * sb), Y(by + uy * r1 * sb), 0, a);
       }
@@ -2093,16 +1838,6 @@ Object.assign(CONCEPTS, {
         if (sw > 0.001) mark(2 + i * 2, xo + pad, x, r * sw, la);
       });
     },
-  },
-
-  collateral: {
-    base: 'dots',
-    label: 'Collateral Management',
-    family: 'Collateral Management',
-    group: 'Roles',
-    blurb: 'A grid of rings that grow as they move down and across, like collateral building into place. The ramp drifts and rings near the cursor swell.',
-    layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
-    defaults: { pitchX: 80, pitchY: 80, stagger: 0, ox: -279.5, oy: -416.5, size: 80, profile: 1, floor: 0.17, rampY: -35, rampSpan: 660, rampTilt: 0.3, light: 225, contrast: 0.6 },
   },
 });
 
@@ -2391,6 +2126,7 @@ export function createHero(el, config = {}, options = {}) {
   let t = 0, last = performance.now(), born = last, running = false, raf = 0, visible = true, destroyed = false;
   const mouse = { tx: 0, ty: 0, x: 0, y: 0, tin: 0, in: 0 };
   const reduceMQ = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  let poster = false; // true only while snapshot() renders, so a concept can leave out parts that don't hand off well
   const reduced = () => opt.reducedMotion === 'force' || (opt.reducedMotion === 'auto' && reduceMQ && reduceMQ.matches);
 
   function rebuild() {
@@ -2482,7 +2218,7 @@ export function createHero(el, config = {}, options = {}) {
     const lay = W / H < 1 || concept.only === 'tall' ? cfg.layout.tall : cfg.layout.wide;
     const ctx = {
       W, H, D, t, I, u: (H / 900) * lay.s, ax: (lay.x - 0.5) * W, ay: (0.5 - lay.y) * H,
-      mx: mouse.x, my: mouse.y, md, mn: { x: mnx, y: mny }, mouseAmt, introAt,
+      mx: mouse.x, my: mouse.y, md, mn: { x: mnx, y: mny }, mouseAmt, introAt, poster,
     };
     pen.reset();
     concept.draw(ctx, pen, state, cfg.params);
@@ -2619,7 +2355,7 @@ export function createHero(el, config = {}, options = {}) {
       const G = cfg.grid, keep = [G.on, G.grainOn];
       if (clean) { G.on = false; G.grainOn = false; applyLook(); }
       if (transparent) see(true);
-      renderFrame();
+      poster = true; renderFrame(); poster = false;
       const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
       if (transparent) see(false);
       if (clean) { [G.on, G.grainOn] = keep; applyLook(); }
