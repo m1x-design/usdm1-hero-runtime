@@ -820,6 +820,35 @@ const HEDGE = [
   [353.5, 51, 186, 679], [419, 48, 186, 650], [480.5, 43, 186, 626], [536.5, 37, 186, 587], [587.5, 33, 186, 558], [634.5, 29, 186, 533],
 ];
 
+// A Margin pill, as in the Figma frame: a rule with a slab hanging below it. The rule is the slab's top edge; the slab is
+// dark with an inner shadow (inset 0 4px 8px), so light spills down from the top edge and fades within a few px.
+// The glow is drawn as hairlines packed one stroke width apart, so it reads as a solid gradient at any pixel ratio.
+function pill(c, pen, cx, y, w, P, af) {
+  const u = c.u, h = P.pillH * u, r = clamp((P.pillR || 0) * u, 0, Math.min(w, h) / 2), top = y, bot = y - h;
+  const rr = Math.max(r, 1), edge = P.pillEdge ?? 0;
+  // Outline: full strength along the top edge, easing to the side and bottom strength around the corners.
+  // With the sides off (the Figma look) only the top edge and its corners are drawn.
+  const ease = (s, x, yy) => af(s, x) * lerp(edge, 1, clamp((yy - (top - rr)) / rr, 0, 1));
+  if (edge > 0.003) outline(pen, rrPath(cx, y - h / 2, w, h, r), 0, ease);
+  else {
+    const pts = [], k = r > 0.5 ? 8 : 0;
+    for (let i = 0; i <= k; i++) { const a = Math.PI - (k ? i / k : 1) * Math.PI / 2; pts.push(cx - w / 2 + r + Math.cos(a) * r, top - r + Math.sin(a) * r); }
+    for (let i = 0; i <= k; i++) { const a = Math.PI / 2 - (k ? i / k : 0) * Math.PI / 2; pts.push(cx + w / 2 - r + Math.cos(a) * r, top - r + Math.sin(a) * r); }
+    outline(pen, pts, 0, ease, false);
+  }
+  const glow = 0.32 * (P.pillGlow ?? 1), depth = (P.pillDepth ?? 5.5) * u;
+  if (glow <= 0) return;
+  const step = Math.max(0.25, (c.lw || 1) / (c.dpr || 1)), n = Math.max(16, (w / 60) | 0);
+  for (let d = step; d < h - step * 0.5; d += step) {
+    const g = glow * Math.exp(-(d / depth) * (d / depth));
+    if (g < 0.004) break;
+    const yy = top - d, dy = Math.min(d, h - d), ins = dy < r ? r - Math.sqrt(Math.max(0, r * r - (r - dy) * (r - dy))) : 0;
+    const x0 = cx - w / 2 + ins, ww = w - 2 * ins;
+    if (ww <= 1) continue;
+    pen.poly(n, (s, o) => { o.x = x0 + ww * s; o.y = yy; o.a = af(s, o.x) * g; });
+  }
+}
+
 Object.assign(CONCEPTS, {
   margin: {
     label: 'Margin',
@@ -838,6 +867,10 @@ Object.assign(CONCEPTS, {
       spacing: p(1.87, 0.5, 3, 0.01, 'Spacing curve'),
       pills: p(4, 0, 12, 1, 'Pill rows'),
       pillH: p(12, 2, 40, 1, 'Pill height'),
+      pillR: p(0, 0, 20, 0.5, 'Pill corner radius'),
+      pillGlow: p(1, 0, 3, 0.05, 'Pill inner glow'),
+      pillDepth: p(5.5, 1, 20, 0.5, 'Pill glow depth'),
+      pillEdge: p(0, 0, 1, 0.01, 'Pill sides and bottom'),
       fade: p(0.65, 0, 1, 0.01, 'End fade'),
       breathe: p(1, 0, 4, 0.05, 'Breathe'),
       sweep: p(1, 0, 3, 0.05, 'Light sweep'),
@@ -859,7 +892,7 @@ Object.assign(CONCEPTS, {
         const cx = X(0);
         const af = (s, x) => { const q = clamp((x - cx) / w + 0.5, 0, 1); return base * (1 - P.fade + P.fade * Math.pow(Math.sin(Math.PI * q), 0.7)); };
         pen.el(i);
-        if (pillAt.has(i) && P.pillH > 0) outline(pen, rrPath(cx, y, w, P.pillH * u, P.pillH * u / 2), 0, af);
+        if (pillAt.has(i) && P.pillH > 0) pill(c, pen, cx, y, w, P, af);
         else pen.poly(Math.max(24, (w / 20) | 0), (s, o) => { o.x = cx - w / 2 + w * s; o.y = y; o.a = af(s, o.x); });
       }
     },
@@ -2219,6 +2252,7 @@ export function createHero(el, config = {}, options = {}) {
     const ctx = {
       W, H, D, t, I, u: (H / 900) * lay.s, ax: (lay.x - 0.5) * W, ay: (0.5 - lay.y) * H,
       mx: mouse.x, my: mouse.y, md, mn: { x: mnx, y: mny }, mouseAmt, introAt, poster,
+      dpr, lw: 1 + Math.max(0, (cfg.look.width || 1) - 1) * (H / 900) * dpr, // device px per line, as the stroke shader draws it
     };
     pen.reset();
     concept.draw(ctx, pen, state, cfg.params);
