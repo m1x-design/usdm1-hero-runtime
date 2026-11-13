@@ -371,7 +371,7 @@ export const CONCEPTS = {
     label: 'Settlement',
     group: 'Use cases',
     family: 'Settlement',
-    blurb: 'Rays converge on one focal node. Light packets travel inward and flash on arrival, and the focal point leans toward the cursor.',
+    blurb: 'Rays meet at one node. A light enters on one ray and leaves on the ray directly opposite, crossing the node in one straight line: value moves through settlement instead of collecting in it. A few lights at a time, alternating direction. Rays near the cursor brighten.',
     layout: { wide: { x: 0.5, y: 0.765, s: 1 }, tall: { x: 0.5, y: 0.79, s: 0.8 } },
     params: {
       rays: p(7, 1, 30, 1, 'Rays per side'),
@@ -379,10 +379,10 @@ export const CONCEPTS = {
       length: p(1, 0.3, 2.5, 0.01, 'Ray length'),
       vline: p(1, 0, 1.5, 0.01, 'Vertical line'),
       depth: p(260, 0, 1000, 5, 'Depth'),
-      packets: p(7, 0, 40, 1, 'Packets'),
-      pspeed: p(1, 0, 4, 0.05, 'Packet speed'),
-      trail: p(0.12, 0.02, 0.5, 0.01, 'Trail length'),
-      sway: p(1, 0, 4, 0.05, 'Sway'),
+      lights: p(3, 0, 8, 1, 'Lights'),
+      period: p(10, 3, 30, 0.5, 'Crossing time (s)'),
+      reach: p(0.75, 0.3, 1, 0.01, 'Light reach'),
+      light: p(1, 0, 3, 0.05, 'Light'),
       node: p(5, 0, 14, 0.5, 'Node size'),
     },
     init(c, P, rnd) {
@@ -390,28 +390,52 @@ export const CONCEPTS = {
       for (const side of [-1, 1]) {
         for (let j = 0; j < n; j++) {
           const f = n > 1 ? (j + 0.5 + (rnd() - 0.5) * 0.8) / n : 0.5;
-          rays.push({ side, ang: lerp(-P.spread, P.spread, f) * Math.PI / 180, len: 0.7 + rnd() * 0.6, b: 0.35 + rnd() * 0.65, z: (rnd() - 0.5) * 2, ph: rnd() * TAU });
+          rays.push({ side, ang: lerp(-P.spread, P.spread, f) * Math.PI / 180, len: 0.7 + rnd() * 0.6, b: 0.35 + rnd() * 0.65, z: (rnd() - 0.5) * 2 });
+          rnd(); // keeps the same random layout as earlier versions
         }
       }
-      const packets = [];
-      for (let k = 0; k < Math.round(P.packets); k++) packets.push({ ray: (rnd() * rays.length) | 0, ph: rnd(), sp: 0.7 + rnd() * 0.6 });
-      return { rays, packets };
+      // For each ray, the ray on the other side that continues it straight through the node.
+      const opp = rays.map((r) => {
+        let best = -1, d = Infinity;
+        rays.forEach((q, j) => { if (q.side !== r.side && Math.abs(q.ang + r.ang) < d) { d = Math.abs(q.ang + r.ang); best = j; } });
+        return best;
+      });
+      return { rays, opp, n };
     },
     draw(c, pen, st, P) {
-      const { u, t, I, W, H } = c;
-      const fx = c.ax + (c.mx - c.ax) * 0.05 * I * c.md * c.mouseAmt;
-      const fy = c.ay + (c.my - c.ay) * 0.05 * I * c.md * c.mouseAmt;
-      const ends = st.rays.map((r) => {
-        const th = r.ang + P.sway * (0.3 + I) * 0.025 * Math.sin(t * 0.3 + r.ph);
+      const { u, t, I, W, H } = c, fx = c.ax, fy = c.ay, n = st.n;
+      const m = sstep(0, 3, t) * P.light * (0.5 + I);
+      const vecs = st.rays.map((r) => {
         const L = P.length * W * 0.55 * r.len * c.introAt(0.05);
-        return [fx + r.side * Math.cos(th) * L, fy + Math.sin(th) * L, r.z * P.depth * u];
+        return [r.side * Math.cos(r.ang) * L, Math.sin(r.ang) * L, r.z * P.depth * u];
       });
+      // Each light runs from reach along one ray, through the node, to reach along the opposite ray. A new pair of rays
+      // is picked every crossing, and the direction alternates.
+      const spots = st.rays.map(() => []), N = Math.round(P.lights);
+      for (let k = 0; k < N && n > 0; k++) {
+        const x = t / P.period + k / N, cyc = Math.floor(x), q = frac(x);
+        const a = Math.floor(frac(Math.sin((cyc * 7 + k * 13) * 127.1 + 311.7) * 43758.5453) * n);
+        const b = st.opp[a];
+        if (b < 0) continue;
+        const [src, dst] = (cyc + k) % 2 ? [b, a] : [a, b];
+        const d = lerp(-P.reach, P.reach, q), env = sstep(0, 0.12, q) * (1 - sstep(0.88, 1, q));
+        spots[src].push(-d, env); spots[dst].push(d, env);
+      }
+      const w = 0.07 * Math.max(0.6, 900 * u / W), R = 70 * u, ms = c.md * c.mouseAmt;
       st.rays.forEach((r, i) => {
-        const [ex, ey, ez] = ends[i];
+        const v = vecs[i], sp = spots[i];
+        let hv = 0;
+        if (ms > 0) { // brighten the rays near the cursor
+          const l2 = v[0] * v[0] + v[1] * v[1] || 1, s = clamp(((c.mx - fx) * v[0] + (c.my - fy) * v[1]) / l2, 0, 1);
+          hv = ms * gauss(Math.hypot(c.mx - fx - v[0] * s, c.my - fy - v[1] * s) / R) * (1 - sstep(0.4, 1, s));
+        }
+        const b = r.b * (1 + 0.8 * hv);
         pen.el(i);
-        pen.poly(24, (s, o) => {
-          o.x = lerp(fx, ex, s); o.y = lerp(fy, ey, s); o.z = ez * s;
-          o.a = r.b * (0.3 + 0.7 * sstep(0, 0.06, s)) * (1 - sstep(0.4, 1, s));
+        pen.poly(28, (s, o) => {
+          o.x = fx + v[0] * s; o.y = fy + v[1] * s; o.z = v[2] * s;
+          let g = 0;
+          for (let j = 0; j < sp.length; j += 2) g += sp[j + 1] * gauss((s - sp[j]) / w);
+          o.a = b * (0.3 + 0.7 * sstep(0, 0.06, s)) * (1 - sstep(0.4, 1, s)) + 1.8 * m * g * (1 - sstep(0.55, 1, s));
         });
       });
       pen.el(-1);
@@ -419,24 +443,9 @@ export const CONCEPTS = {
         const up = 0.32 * H * P.vline * c.introAt(0.3), dn = 0.26 * H * P.vline * c.introAt(0.3);
         pen.poly(20, (s, o) => { o.x = fx; o.y = lerp(fy - dn, fy + up, s); const k = s < dn / (up + dn) ? 1 - s / (dn / (up + dn)) : (s - dn / (up + dn)) / (1 - dn / (up + dn)); o.a = 0.7 * Math.pow(1 - k, 1.6); });
       }
-      let flash = 0;
-      const vis = clamp(0.35 + I, 0, 1) * c.introAt(0.6);
-      st.packets.forEach((k) => {
-        const [ex, ey, ez] = ends[k.ray];
-        const q = 1 - frac(t * 0.07 * P.pspeed * k.sp + k.ph);
-        const tl = P.trail;
-        const far = 1 - sstep(0.75, 1, q);
-        pen.poly(10, (s, o) => {
-          const w = clamp(q + tl * s, 0, 1);
-          o.x = lerp(fx, ex, w); o.y = lerp(fy, ey, w); o.z = ez * w;
-          o.a = vis * far * 1.4 * Math.pow(1 - s, 2);
-        });
-        pen.point(lerp(fx, ex, q), lerp(fy, ey, q), ez * q, 2.5, vis * far);
-        flash += gauss(q / 0.035);
-      });
       if (P.node > 0) {
         pen.point(fx, fy, 0, P.node, 0.95 * c.introAt(0));
-        pen.point(fx, fy, 0, -P.node * 6, (0.08 + 0.35 * Math.min(1, flash)) * c.introAt(0));
+        pen.point(fx, fy, 0, -P.node * 6, 0.08 * c.introAt(0));
       }
     },
   },
@@ -1944,7 +1953,7 @@ export const DEFAULTS = {
   concept: 'orbit',
   seed: 7,
   look: {
-    bg: '#121316', stroke: '#d5e3f6', opacity: 0.7, back: '#8dadd3', backOpacity: 0.5,
+    bg: '#121316', stroke: '#d5e3f6', opacity: 1, back: '#8dadd3', backOpacity: 0.5,
     // width: stroke width, 1 to 3. 1 = hairline (1 device pixel, the original look). Each step above 1 adds
     // that many px at a 900px-tall frame, scaling with the hero.
     width: 1,
