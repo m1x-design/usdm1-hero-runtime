@@ -1958,7 +1958,7 @@ export const DEFAULTS = {
     band: 0.8, bandAngle: 60, bandWidth: 2.2, bandX: 0.5, bandY: 0.5,
   },
   motion: { intensity: 0.35, speed: 1, intro: false },
-  interact: { mouse: 1, glow: 0.6, glowRadius: 0.22, touch: true, scrollSweep: 0.7 },
+  interact: { mouse: 0.5, glow: 0.6, glowRadius: 0.22, touch: true, scrollSweep: 0.7 },
   camera: { fov: 30, tilt: 0, orbit: 0 },
   // Texture layers shared by every concept: hairline grid and film grain.
   grid: { on: false, strength: 0.35, step: 40, depth: 160, fx: 0.5, fy: 0.5, focus: 1, grainOn: true, grain: 0.03 },
