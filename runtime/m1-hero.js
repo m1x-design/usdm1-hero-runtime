@@ -379,6 +379,7 @@ export const CONCEPTS = {
       length: p(1, 0.3, 2.5, 0.01, 'Ray length'),
       vline: p(1, 0, 1.5, 0.01, 'Vertical line'),
       depth: p(260, 0, 1000, 5, 'Depth'),
+      mirror: p(1, 0, 1, 1, 'Sides', { options: { Mirrored: 1, Independent: 0 } }),
       lights: p(3, 0, 8, 1, 'Lights'),
       period: p(10, 3, 30, 0.5, 'Crossing time (s)'),
       reach: p(0.75, 0.3, 1, 0.01, 'Light reach'),
@@ -394,6 +395,9 @@ export const CONCEPTS = {
           rnd(); // keeps the same random layout as earlier versions
         }
       }
+      // Mirrored: the right side copies the left, so the fan is symmetrical. The random draws above still run for both
+      // sides, so Independent keeps the layout of earlier versions.
+      if (Math.round(P.mirror)) for (let j = 0; j < n; j++) Object.assign(rays[n + j], { ang: rays[j].ang, len: rays[j].len, b: rays[j].b, z: rays[j].z });
       // For each ray, the ray on the other side that continues it straight through the node.
       const opp = rays.map((r) => {
         let best = -1, d = Infinity;
