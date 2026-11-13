@@ -405,8 +405,11 @@ export const CONCEPTS = {
     draw(c, pen, st, P) {
       const { u, t, I, W, H } = c, fx = c.ax, fy = c.ay, n = st.n;
       const m = sstep(0, 3, t) * P.light * (0.5 + I);
+      // Scale grows or shrinks the whole fan around the node. The art is drawn relative to the frame, so measure the scale
+      // against this concept's default (1 wide, 0.8 tall): at the default it draws exactly as before.
+      const sc = (u * 900 / H) / (W / H < 1 ? this.layout.tall.s : this.layout.wide.s);
       const vecs = st.rays.map((r) => {
-        const L = P.length * W * 0.55 * r.len * c.introAt(0.05);
+        const L = P.length * W * 0.55 * r.len * sc * c.introAt(0.05);
         return [r.side * Math.cos(r.ang) * L, Math.sin(r.ang) * L, r.z * P.depth * u];
       });
       // Each light runs from reach along one ray, through the node, to reach along the opposite ray. A new pair of rays
@@ -421,7 +424,7 @@ export const CONCEPTS = {
         const d = lerp(-P.reach, P.reach, q), env = sstep(0, 0.12, q) * (1 - sstep(0.88, 1, q));
         spots[src].push(-d, env); spots[dst].push(d, env);
       }
-      const w = 0.07 * Math.max(0.6, 900 * u / W), R = 70 * u, ms = c.md * c.mouseAmt;
+      const w = 0.07 * Math.max(0.6, 900 * u / (W * sc)), R = 70 * u, ms = c.md * c.mouseAmt;
       st.rays.forEach((r, i) => {
         const v = vecs[i], sp = spots[i];
         let hv = 0;
@@ -440,12 +443,12 @@ export const CONCEPTS = {
       });
       pen.el(-1);
       if (P.vline > 0) {
-        const up = 0.32 * H * P.vline * c.introAt(0.3), dn = 0.26 * H * P.vline * c.introAt(0.3);
+        const up = 0.32 * H * P.vline * sc * c.introAt(0.3), dn = 0.26 * H * P.vline * sc * c.introAt(0.3);
         pen.poly(20, (s, o) => { o.x = fx; o.y = lerp(fy - dn, fy + up, s); const k = s < dn / (up + dn) ? 1 - s / (dn / (up + dn)) : (s - dn / (up + dn)) / (1 - dn / (up + dn)); o.a = 0.7 * Math.pow(1 - k, 1.6); });
       }
       if (P.node > 0) {
-        pen.point(fx, fy, 0, P.node, 0.95 * c.introAt(0));
-        pen.point(fx, fy, 0, -P.node * 6, 0.08 * c.introAt(0));
+        pen.point(fx, fy, 0, P.node * sc, 0.95 * c.introAt(0));
+        pen.point(fx, fy, 0, -P.node * 6 * sc, 0.08 * c.introAt(0));
       }
     },
   },
