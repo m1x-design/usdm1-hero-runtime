@@ -1961,7 +1961,7 @@ export const DEFAULTS = {
   interact: { mouse: 0.5, glow: 0.6, glowRadius: 0.22, touch: true, scrollSweep: 0.7 },
   camera: { fov: 30, tilt: 0, orbit: 0 },
   // Texture layers shared by every concept: hairline grid and film grain.
-  grid: { on: false, strength: 0.35, step: 40, depth: 160, fx: 0.5, fy: 0.5, focus: 1, grainOn: true, grain: 0.03 },
+  grid: { on: false, strength: 0.35, step: 32, depth: 160, fx: 0.5, fy: 0.5, focus: 1, grainOn: true, grain: 0.03 },
   render: { dpr: 2 },
   poster: '',
   // Optional portrait overrides, used whenever the container is taller than wide (mobile, hero split).
