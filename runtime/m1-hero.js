@@ -546,7 +546,7 @@ export const CONCEPTS = {
   tiles: {
     label: 'Treasury Operations',
     group: 'Use cases',
-    family: 'Treasury, Repo, Roles',
+    family: 'Treasury, Roles',
     blurb: 'An outlined tile grid that lifts toward the viewer under the cursor like a lens, with a slow depth wave across the field.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: { x: 0.5, y: 0.5, s: 0.9 } },
     params: {
@@ -781,7 +781,8 @@ function outline(pen, P, z, af, closed = true) {
 // Rounded rectangle outline in world units, starting on the right edge and running counterclockwise.
 function rrPath(cx, cy, w, h, r) {
   r = clamp(r, 0, Math.min(w, h) / 2);
-  const k = r > 0.5 ? 6 : 0, P = [], hw = w / 2 - r, hh = h / 2 - r;
+  // Corner segments scale with the radius (about one per 3 px of radius), so large rounded ends stay smooth.
+  const k = r > 0.5 ? clamp(Math.ceil(r / 3), 6, 48) : 0, P = [], hw = w / 2 - r, hh = h / 2 - r;
   const cs = [[hw, hh], [-hw, hh], [-hw, -hh], [hw, -hh]];
   for (let q = 0; q < 4; q++) for (let i = 0; i <= k; i++) {
     const a = (q + (k ? i / k : 0.5)) * Math.PI / 2;
@@ -1023,13 +1024,64 @@ Object.assign(CONCEPTS, {
   },
 
   repo: {
-    base: 'tiles',
     label: 'Repo',
     family: 'Repo',
     group: 'Use cases',
-    blurb: 'Rows split by one rule, each with a half circle where cash meets collateral. Rows lift under the cursor and a slow depth wave runs through the field.',
+    blurb: 'Each row is one capsule split by a center rule, collateral on the left and cash on the right. In the opening leg light carries collateral along the top edge while cash runs the bottom edge the other way; they cross the rule together and it flashes as the legs settle. At maturity both run back.',
     layout: { wide: { x: 0.495, y: 0.5, s: 1 }, tall: { x: 0.495, y: 0.5, s: 0.96 } },
-    defaults: { shape: 2, cols: 1, pitchX: 300, pitchY: 240, h: 240, rules: 0.8, alt: 0, stagger: 0, lens: 1.4, wave: 0.2 },
+    params: {
+      pitch: p(240, 80, 500, 1, 'Row pitch'),
+      r: p(96, 20, 250, 1, 'End radius'),
+      len: p(1180, 300, 2400, 1, 'Capsule length'),
+      margin: p(24, 0, 200, 1, 'Edge margin'),
+      period: p(8, 2, 30, 0.5, 'Cycle (s)'),
+      light: p(1, 0, 3, 0.05, 'Light'),
+      rules: p(0.5, 0, 1, 0.01, 'Rule lines'),
+    },
+    init(c, P, rnd) { return seeds(rnd); },
+    draw(c, pen, st, P) {
+      const { u, t, W, H } = c, py = P.pitch * u, R = Math.min(P.r * u, py / 2);
+      // Keep both round ends in frame: on narrow screens the capsule shortens instead of running off the sides.
+      const room = W / 2 - Math.abs(c.ax) - P.margin * u;
+      const hw = Math.max(R * 1.5, Math.min(P.len * u / 2, room));
+      const i0 = Math.floor((-H / 2 - c.ay) / py) - 1, i1 = Math.ceil((H / 2 - c.ay) / py) + 1;
+      if (P.rules > 0) {
+        const ra = P.rules * 0.6 * c.introAt(0);
+        pen.el(-1);
+        for (let i = i0; i <= i1; i++) {
+          const y = c.ay + (i + 0.5) * py;
+          if (Math.abs(y) > H / 2 + 2) continue;
+          pen.poly(20, (s, o) => { o.x = lerp(-W / 2, W / 2, s); o.y = y; o.a = ra * (0.5 + 0.5 * Math.sin(Math.PI * s)); });
+        }
+      }
+      // The lights run the full length, end to end, so they roll onto the round ends instead of stopping where the curve begins.
+      const left = c.ax - hw, right = c.ax + hw, w = 70 * u, m = wake(t) * P.light;
+      for (let i = i0; i <= i1; i++) {
+        const yc = c.ay + i * py;
+        if (Math.abs(yc) - R > H / 2 + 4) continue;
+        // Opening leg over the first 36% of the cycle, closing leg from 50% to 86%.
+        const ph = frac(t / P.period + sd(st, i + 9) * 0.9);
+        const q1 = clamp(ph / 0.36, 0, 1), q2 = clamp((ph - 0.5) / 0.36, 0, 1), closing = q2 > 0, q = closing ? q2 : q1;
+        const on = sstep(0, 0.24, q) * (1 - sstep(0.76, 1, q)); // long, soft fade in and out
+        // Opening: collateral top left to right, cash bottom right to left. Closing: both run back.
+        const top = closing ? lerp(right, left, q) : lerp(left, right, q), bot = closing ? lerp(left, right, q) : lerp(right, left, q);
+        const cross = gauss((q - 0.5) / 0.06) * on * m;
+        const k = c.md * c.mouseAmt * gauss((yc - c.my) / (py * 0.6));
+        const base = (0.5 + 0.25 * sd(st, i)) * (1 + 0.7 * k) * c.introAt(0.06 * (i - i0));
+        pen.el(i);
+        outline(pen, rrPath(c.ax, yc, 2 * hw, 2 * R, R), 0, (s, x, y) => {
+          // Top half carries the collateral light, bottom half the cash light. On the round ends the light dims as the
+          // curve turns toward the middle, so it wraps around the end and fades instead of being cut off.
+          const dy = y - yc, cap = Math.abs(x - c.ax) > hw - R ? Math.pow(clamp(Math.abs(dy) / R, 0, 1), 2) : 1;
+          const g = Math.abs(dy) < 1e-3 ? 0 : gauss((x - (dy > 0 ? top : bot)) / w) * cap;
+          return base * (1 - 0.55 * sstep(0.55, 1, Math.abs(x - c.ax) / hw)) + 1.6 * m * on * g;
+        });
+        // The center rule inside the row: faint, flashing as the legs cross it.
+        pen.el(-1);
+        const ra = 0.22 * base + 1.4 * cross;
+        pen.poly(8, (s, o) => { o.x = c.ax; o.y = yc - R + 2 * R * s; o.a = ra * (0.6 + 0.4 * Math.sin(Math.PI * s)); });
+      }
+    },
   },
 
   liquidity: {
@@ -2416,7 +2468,7 @@ export const PRESETS = [
   { name: 'Settlement', cfg: { concept: 'burst' } },
   { name: 'Newsroom', cfg: { concept: 'network' } },
   { name: 'Treasury Operations', cfg: { concept: 'tiles' } },
-  { name: 'Repo', cfg: { concept: 'tiles', params: { shape: 2, cols: 1, pitchX: 300, pitchY: 240, h: 240, rules: 0.8, alt: 0, stagger: 0, lens: 1.4, wave: 0.2 }, layout: { wide: { x: 0.44, y: 0.13 }, tall: { x: 0.5, y: 0.1 } } } },
+  { name: 'Repo', cfg: { concept: 'repo' } },
   { name: 'Roles: Circles', cfg: { concept: 'tiles', params: { shape: 1, pitchX: 64, pitchY: 64, w: 50, h: 50, alt: 0, stagger: 0.5, lens: 1.6, lensR: 0.25, wave: 0.8 } } },
   { name: 'Collateral Mobility', cfg: { concept: 'bars' } },
   { name: 'Repo Cash', cfg: { concept: 'waves', portrait: { params: { height: 1184 } } } },
