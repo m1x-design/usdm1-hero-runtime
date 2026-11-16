@@ -554,7 +554,7 @@ export const CONCEPTS = {
       st.pulses.forEach((k) => {
         const H0 = geo[k.ci].hubs[k.hub], [ex, ey, ez] = H0.ends[k.edge];
         const q = 1 - frac(t * 0.06 * k.sp + k.ph);
-        const far = 1 - sstep(0.6, 0.95, q);
+        const far = (1 - sstep(0.6, 0.95, q)) * sstep(0, 0.12, q); // fades in leaving the far end, out arriving at the hub
         pen.poly(8, (s, o) => {
           const w = clamp(q + 0.1 * s, 0, 1);
           o.x = lerp(H0.x, ex, w); o.y = lerp(H0.y, ey, w); o.z = lerp(H0.z, ez, w);
@@ -1195,7 +1195,7 @@ Object.assign(CONCEPTS, {
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
       const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
-      const head = frac(t * 0.06) * (n + 3) - 1.5;
+      const head = frac(t * 0.06 * (n + 3) / (n + 6)) * (n + 6) - 3; // starts and ends 3 past the row, dark when it loops; same speed
       for (let i = 0; i < n; i++) {
         const w = (P.w0 + i * P.wStep) * u, h = (P.h0 + i * P.hStep) * u * c.introAt(0.08 * i);
         const xl = X(P.x0 + i * P.pitch) + P.pulse * mo * 12 * u * gauss((i - head) / 1.1), cy = Y(P.y);
@@ -1387,10 +1387,10 @@ Object.assign(CONCEPTS, {
         const x0 = Math.min(xt, xb) - w, bw = Math.abs(xt - xb) + 2 * w;
         const lit = (x, y) => 1 - P.light * clamp(1.2936 - 0.7461 * (x - x0) / bw - 0.7909 * (y - P.top) / H, 0, 1);
         const base = 0.9 + 0.1 * sd(st, j, sg + 4), grow = c.introAt(0.04 * j);
-        const head = frac(t * 0.06 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg));
+        const head = frac(t * 0.06 / 1.2 * (0.8 + 0.4 * sd(st, j, sg + 2)) + sd(st, j, sg)); // laneLight runs 1.2 lengths per cycle
         const at = (q, e) => { // q: 0 at the bottom, 1 at the top; e: -1 left edge, 1 right edge
           const x = lerp(xb, xt, q) + e * w, y = lerp(P.bottom, P.top, q);
-          return [X(lerp(xb, xt, q) * spread + e * w), Y(y), base * lit(x, y) * (1 + P.pulses * mo * 1.4 * gauss((1 - q - head) / 0.035))];
+          return [X(lerp(xb, xt, q) * spread + e * w), Y(y), base * lit(x, y) * (1 + P.pulses * mo * 1.4 * laneLight(1 - q, head, 0.035))];
         };
         pen.el(id++);
         for (const e of [-1, 1]) pen.poly(48, (s, o) => { // the intro grows each slat up from the bottom
@@ -1744,14 +1744,14 @@ Object.assign(CONCEPTS, {
       for (let i = 0; i < n; i++) {
         const f = n > 1 ? i / (n - 1) : 0.5;
         const yL = Y(P.ly + (f - 0.5) * P.spread);
-        const head = frac(t * 0.06 * (0.8 + 0.4 * sd(st, i)) + sd(st, i, 1));
+        const head = frac(t * 0.06 / 1.2 * (0.8 + 0.4 * sd(st, i)) + sd(st, i, 1)); // laneLight runs 1.2 lengths per cycle
         const grow = c.introAt(0.01 * i);
         pen.el(i);
         pen.poly(60, (s, o) => {
           const q = s * grow; // the intro draws each line from the left edge in toward the point
           o.x = lerp(xL, pX, q);
           o.y = lerp(yL, pY, Math.pow(sstep(0, 1, q), P.shape));
-          o.a = (lerp(0.15, 1, Math.pow(q, 1.5 * P.glow + 0.2))) * (0.85 + P.flow * mo * 1.4 * gauss((q - head) / 0.04));
+          o.a = (lerp(0.15, 1, Math.pow(q, 1.5 * P.glow + 0.2))) * (0.85 + P.flow * mo * 1.4 * laneLight(q, head, 0.04));
         });
       }
     },
