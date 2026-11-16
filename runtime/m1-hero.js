@@ -930,15 +930,26 @@ Object.assign(CONCEPTS, {
       drift: p(1, 0, 4, 0.05, 'Depth drift'),
       pass: p(1, 0, 3, 0.05, 'Highlight pass'),
     },
-    init(c, P, rnd) { return seeds(rnd); },
+    init(c, P, rnd) { return { ...seeds(rnd), h: new Float32Array(PANELS.length), t: -1 }; },
     draw(c, pen, st, P) {
       const { u, t, I } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), g = (P.gap - 13) / 2;
       const hi = frac(t * 0.03) * (PANELS.length + 3) - 1.5;
+      // Hover eases in and out over time instead of switching on the frame the cursor crosses a panel edge, so a panel
+      // glides toward the viewer rather than snapping. Frozen time (poster, reduced motion) or a restart jumps straight to target.
+      const snap = st.t < 0 || t <= st.t, ease = snap ? 1 : 1 - Math.exp(-Math.min(0.1, t - st.t) * 7);
+      st.t = t;
       PANELS.forEach(([l, tp, r, b], i) => {
         const x0 = X(l - 800 - g), x1 = X(r - 800 + g), y0 = Y(tp - 450 - g), y1 = Y(b - 450 + g);
         const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, w = Math.abs(x1 - x0), h = Math.abs(y1 - y0);
+        // How far inside the panel the cursor is, feathered across its edge, so crossing a gap hands off between
+        // neighbors instead of dropping both to rest.
+        const dx = Math.abs(c.mx - cx) - w / 2, dy = Math.abs(c.my - cy) - h / 2;
+        const d = Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0);
+        const inside = 1 - sstep(-14 * u, 14 * u, d);
+        const target = c.md * c.mouseAmt * lerp(0.15 * gauss(Math.hypot(c.mx - cx, c.my - cy) / (400 * u)), 1, inside);
+        st.h[i] += (target - st.h[i]) * ease;
         if (w < 2 || h < 2 || offView(c, cx, cy, w / 2, h / 2)) return;
-        const k = c.md * c.mouseAmt * (Math.abs(c.mx - cx) < w / 2 && Math.abs(c.my - cy) < h / 2 ? 1 : 0.15 * near(c, cx, cy, 400 * u));
+        const k = st.h[i];
         const z = P.lift * (0.3 + I) * k * 90 * u + P.drift * mo * Math.sin(t * 0.35 + sd(st, i) * TAU) * 40 * u;
         const base = (0.6 + 0.4 * sd(st, i, 3)) * (1 + P.pass * mo * 1.3 * gauss((i - hi) / 0.9) + 0.5 * k) * c.introAt(0.06 * i);
         pen.el(i);
