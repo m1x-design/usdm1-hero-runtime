@@ -101,25 +101,30 @@ class Pen {
     for (let i = 0; i < upTo; i++) if (E[i] > max) max = E[i];
     if (max < 0) return;
     const m = (max >> 1) + 1;
-    if (this.lo.length < m) { this.lo = new Float64Array(m * 2); this.hi = new Float64Array(m * 2); }
+    if (this.lo.length < m * 2) { this.lo = new Float64Array(m * 4); this.hi = new Float64Array(m * 4); }
+    // Each shape's bounding box: lo/hi hold x at [k] and y at [m + k].
     const lo = this.lo, hi = this.hi;
-    lo.fill(Infinity, 0, m); hi.fill(-Infinity, 0, m);
+    lo.fill(Infinity, 0, m * 2); hi.fill(-Infinity, 0, m * 2);
     const on = (e) => e >= 0 && (mode === 1 || (e & 1) === 1);
     for (let i = 0; i < upTo; i++) {
       const e = E[i]; if (!on(e)) continue;
-      const k = e >> 1, p = P[i * 3] * dx + P[i * 3 + 1] * dy;
-      if (p < lo[k]) lo[k] = p; if (p > hi[k]) hi[k] = p;
+      const k = e >> 1, x = P[i * 3], y = P[i * 3 + 1];
+      if (x < lo[k]) lo[k] = x; if (x > hi[k]) hi[k] = x;
+      if (y < lo[m + k]) lo[m + k] = y; if (y > hi[m + k]) hi[m + k] = y;
     }
-    const r = Math.max(0.05, reach);
+    // Like a Figma linear gradient, the angle is taken in each shape's own box, scaled to a unit square: 0 fades
+    // toward the right edge, 45 toward the top-right corner, 90 toward the top. So on a long, thin lane every angle
+    // still gives a distinct result, instead of everything but straight up or down reading as plain left or right.
+    const r = Math.max(0.05, reach), p0 = Math.min(0, dx) + Math.min(0, dy), span = Math.abs(dx) + Math.abs(dy);
     for (let i = 0; i < upTo; i++) {
       const e = E[i]; if (!on(e)) continue;
-      const k = e >> 1, span = hi[k] - lo[k];
-      if (span < 1e-6) continue;
-      const t = (P[i * 3] * dx + P[i * 3 + 1] * dy - lo[k]) / span;
-      // A shape with almost no extent along the fill direction (a straight line running across it) would flip between
-      // unfaded and fully faded as it bends by a fraction of a pixel, so the fade eases in over the first few pixels.
-      const w = span >= 3 ? 1 : sstep(0, 3, span);
-      A[i] *= 1 - w * Math.min(1, t / r);
+      const k = e >> 1, w = hi[k] - lo[k], h = hi[m + k] - lo[m + k];
+      // A side with almost no extent (a straight line) would flip between its two ends as it bends by a fraction of
+      // a pixel, so under 3 px it eases toward the middle of the box instead.
+      const u = w > 1e-6 ? lerp(0.5, (P[i * 3] - lo[k]) / w, sstep(0, 3, w)) : 0.5;
+      const v = h > 1e-6 ? lerp(0.5, (P[i * 3 + 1] - lo[m + k]) / h, sstep(0, 3, h)) : 0.5;
+      const t = (u * dx + v * dy - p0) / span;
+      A[i] *= 1 - Math.min(1, t / r);
     }
   }
   // f(t, o) fills o.x, o.y, o.z, o.a for t in [0, 1]
@@ -771,6 +776,12 @@ export const CONCEPTS = {
 // art px is one canvas px at 960 tall. Every motion is scaled by wake(t), so the poster frame (t = 0) is the art at rest.
 const wake = (t) => sstep(0, 3, t);
 const near = (c, x, y, R) => c.md * c.mouseAmt * gauss(Math.hypot(x - c.mx, y - c.my) / R);
+// A light that runs along a lane, q 0 to 1 along it, cycle p 0 to 1. It starts and ends a little past the lane's ends
+// and fades in and out over the first and last fifth of its run, so it is fully dark when it wraps instead of vanishing.
+const laneLight = (q, p, w = 0.05) => {
+  const h = lerp(-0.1, 1.1, p), env = sstep(0, 0.2, p) * (1 - sstep(0.8, 1, p));
+  return env * gauss((q - h) / w);
+};
 const offView = (c, x, y, hw, hh) => Math.abs(x) - hw > c.W / 2 + 4 || Math.abs(y) - hh > c.H / 2 + 4;
 const art = (c) => [(x) => c.ax + x * c.u, (y) => c.ay - y * c.u];
 // Rim light around a closed outline: brightest toward ang (deg, 0 = right, counterclockwise), like the Figma strokes.
@@ -1122,7 +1133,11 @@ Object.assign(CONCEPTS, {
       pitch: p(64, 10, 200, 1, 'Lane pitch'),
       len: p(1221, 100, 3000, 1, 'Lane length'),
       h: p(24, 0, 80, 1, 'Lane height'),
-      offset: p(335.5, 0, 1200, 0.5, 'Column offset'),
+      // How far each lane's inner end reaches past the center line into the other column (negative leaves a gap).
+      // Replaces Column offset: overlap = length / 2 − offset (see normalize). Outer ends stay put, so lanes grow or shrink.
+      overlap: p(275, -600, 1200, 0.5, 'Overlap depth'),
+      vary: p(0, 0, 800, 1, 'Overlap variation'),
+      pattern: p(0, 0, 5, 1, 'Variation pattern', { needs: 'vary', options: { Arrow: 0, Hourglass: 1, Diagonal: 2, Wave: 3, 'One side deeper': 4, Random: 5 } }),
       fade: p(0.85, 0, 1, 0.01, 'Outer fade'),
       slide: p(1, 0, 4, 0.05, 'Slide'),
       run: p(1, 0, 3, 0.05, 'Light run'),
@@ -1134,15 +1149,22 @@ Object.assign(CONCEPTS, {
         const right = (i & 1) === 0, sg = right ? 1 : -1;
         const y = Y((i - (n - 1) / 2) * P.pitch);
         const k = near(c, c.mx, y, P.pitch * 0.9 * u);
-        const L = P.len * u * c.introAt(0.04 * i);
+        // Per-lane overlap: the base depth plus a pattern across the rows, -1 to 1, scaled by the variation.
+        const r = n > 1 ? i / (n - 1) : 0.5, cr = 2 * r - 1;
+        const f = [1 - 2 * Math.abs(cr), 2 * Math.abs(cr) - 1, cr, Math.sin(r * TAU), right ? 1 : -1, sd(st, i, 7) * 2 - 1][Math.round(P.pattern)] ?? 0;
+        // Outer ends run just past the frame edge. On narrow frames (mobile, split) the lanes shorten to keep the same
+        // overhang as desktop, about 18% of half the frame width, instead of running half their length off screen.
+        const capA = (c.W / 2 * 1.1825 - sg * c.ax) / u;
+        const outerA = Math.min(P.len - P.overlap, capA), lenA = Math.max(20, outerA + P.overlap + P.vary * f), midA = sg * (outerA - lenA / 2);
+        const L = lenA * u * c.introAt(0.04 * i);
         // The intro grows each lane in from its outer end, so lanes enter from the left and right edges.
-        const cx = X(sg * P.offset) + sg * (P.len * u - L) / 2 + sg * P.slide * mo * 60 * u * Math.sin(t * 0.3 + sd(st, i) * TAU) + (c.mx - X(sg * P.offset)) * 0.04 * k;
+        const cx = X(midA) + sg * (lenA * u - L) / 2 + sg * P.slide * mo * 60 * u * Math.sin(t * 0.3 + sd(st, i) * TAU) + (c.mx - X(midA)) * 0.04 * k;
         const inner = cx - sg * L / 2; // the end that faces the center
-        const head = frac(t * 0.06 + sd(st, i, 1));
+        const head = frac(t * 0.05 + sd(st, i, 1)); // runs 1.2 lane lengths per cycle (see laneLight), so the same speed as before
         const base = (0.6 + 0.4 * sd(st, i, 2)) * (1 + 0.9 * k);
         const af = (s, x) => {
           const q = clamp(sg * (x - inner) / L, 0, 1);
-          return base * (1 - P.fade * q + P.run * mo * 1.2 * gauss((q - head) / 0.05));
+          return base * (1 - P.fade * q + P.run * mo * 1.2 * laneLight(q, head));
         };
         pen.el(i, right);
         if (P.h > 0.5) outline(pen, rrPath(cx, y, L, P.h * u, P.h * u / 2), 0, af);
@@ -1815,13 +1837,13 @@ Object.assign(CONCEPTS, {
         const k = near(c, c.mx, y, P.pitch * u) * P.lean * (0.4 + I);
         const split = X(P.tip - d * P.step + P.push * mo * 40 * Math.sin(t * 0.4 - d * 0.35)) + (c.mx - X(P.tip - d * P.step)) * 0.15 * k;
         const a = split - P.gap * u / 2, b = split + P.gap * u / 2;
-        const head = frac(t * 0.05 + sd(st, i));
+        const head = frac(t * 0.05 / 1.2 + sd(st, i)); // runs 1.2 lane lengths per cycle (see laneLight), so the same speed as before
         const base = (0.6 + 0.4 * sd(st, i, 1)) * (1 + 0.8 * k) * c.introAt(0.03 * d);
         const lane = (x0, x1, odd, dir) => {
           if (x1 - x0 < 2) return;
           const L = x1 - x0, cx = (x0 + x1) / 2;
           pen.el(i * 2 + odd, odd);
-          const af = (s, x) => { const q = clamp(dir > 0 ? (x - x0) / L : (x1 - x) / L, 0, 1); return base * (1 - P.fade * q + P.run * mo * gauss((q - head) / 0.05)); };
+          const af = (s, x) => { const q = clamp(dir > 0 ? (x - x0) / L : (x1 - x) / L, 0, 1); return base * (1 - P.fade * q + P.run * mo * laneLight(q, head)); };
           if (P.h > 0.5) outline(pen, rrPath(cx, y, L, P.h * u, P.h * u / 2), 0, af);
           else pen.poly(30, (s, o) => { o.x = lerp(x0, x1, s); o.y = y; o.a = af(s, o.x); });
         };
@@ -2036,6 +2058,16 @@ export function normalize(cfg = {}) {
   if (out.portrait) {
     delete out.portrait.params.grid; delete out.portrait.params.gridStep; delete out.portrait.look.grain;
     if (oldGrain(cfg.portrait) != null) out.portrait.grid.grain = oldGrain(cfg.portrait);
+  }
+  // Trading & Liquidity: Column offset (lane center from the middle) became Overlap depth (inner end past the middle).
+  if (concept === 'liquidity') {
+    const mig = (src, dst) => {
+      if (!isObj(src) || !isObj(dst)) return;
+      if (src.offset != null && src.overlap == null) dst.overlap = +dst.len / 2 - +src.offset;
+      delete dst.offset;
+    };
+    mig(cfg.params, out.params);
+    if (out.portrait) mig(isObj(cfg.portrait) && isObj(cfg.portrait.params) && cfg.portrait.params.offset != null ? cfg.portrait.params : cfg.params, out.portrait.params);
   }
   // Stroke width runs 1 (hairline) to 3; early drafts used 0 for the hairline.
   for (const c of [out, out.portrait]) if (c) c.look.width = Math.min(3, Math.max(1, +c.look.width || 1));
