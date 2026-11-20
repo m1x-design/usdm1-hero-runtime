@@ -1720,37 +1720,54 @@ Object.assign(CONCEPTS, {
     label: 'Risk',
     family: 'Risk',
     group: 'Roles',
-    blurb: 'Many lines gather from across the frame into one point, like exposures netting down. Light flows along the lines into the point, which sways and leans toward the cursor.',
+    blurb: 'Many lines gather from across the frame into one point, like exposures netting down. The top and bottom halves of the fan each have their own spread and curve. Light flows along the lines into the point, the fan slowly opens and closes, and the cursor spreads it: wider toward the top and bottom edges, tighter at the middle.',
     layout: { wide: { x: 0.5, y: 0.5, s: 1 }, tall: SPLIT },
+    // Each half of the fan has its own spread (how far its outer line starts from the center at the left edge),
+    // curve type and curve strength. Defaults draw the same picture as the old single Spread at left (948) and Gather curve (1).
     params: {
       count: p(40, 4, 120, 1, 'Lines'),
-      spread: p(948, 50, 2400, 1, 'Spread at left'),
       px: p(503, -900, 1400, 1, 'Point X'),
       py: p(45, -900, 900, 1, 'Point Y'),
       ly: p(0, -900, 900, 1, 'Spread center Y'),
-      shape: p(1, 0.3, 3, 0.01, 'Gather curve'),
+      spreadTop: p(474, 0, 1200, 1, 'Top spread'),
+      curveTop: p(0, 0, 3, 1, 'Top curve', { options: { 'S-curve': 0, 'Ease out': 1, 'Ease in': 2, Straight: 3 } }),
+      shapeTop: p(1, 0.3, 3, 0.01, 'Top curve strength'),
+      spreadBot: p(474, 0, 1200, 1, 'Bottom spread'),
+      curveBot: p(0, 0, 3, 1, 'Bottom curve', { options: { 'S-curve': 0, 'Ease out': 1, 'Ease in': 2, Straight: 3 } }),
+      shapeBot: p(1, 0.3, 3, 0.01, 'Bottom curve strength'),
       glow: p(0.85, 0, 1, 0.01, 'Point glow'),
-      sway: p(1, 0, 4, 0.05, 'Sway'),
+      sway: p(1, 0, 4, 0.05, 'Breathe'),
       flow: p(1, 0, 3, 0.05, 'Light flow'),
-      lean: p(1, 0, 3, 0.05, 'Cursor lean'),
+      lean: p(1, 0, 3, 0.05, 'Cursor spread'),
+      // Stroke gradient (Look > Stroke fill) over the whole fan, each half, or each line. Each line alone runs corner
+      // to corner across its own box, so most Fade toward angles read the same; across the fan every angle differs.
+      gradBox: p(0, 0, 2, 1, 'Gradient across', { options: { 'Whole fan': 0, 'Each half': 1, 'Each line': 2 } }),
     },
     init(c, P, rnd) { return seeds(rnd); },
     draw(c, pen, st, P) {
       const { u, t, I, W } = c, [X, Y] = art(c), mo = wake(t) * (0.3 + I), n = Math.round(P.count);
       const lean = P.lean * c.md * c.mouseAmt * (0.3 + I);
-      const pX = X(P.px) + (c.mx - X(P.px)) * 0.12 * lean;
-      const pY = Y(P.py + P.sway * mo * 30 * Math.sin(t * 0.3)) + (c.my - Y(P.py)) * 0.25 * lean;
+      // Like Prime Brokers: the fan only opens and closes around its center line. It breathes slowly, and the cursor
+      // opens it toward the top and bottom edges of the frame and closes it toward the middle. The point stays put.
+      const open = 1 + P.sway * mo * 0.06 * Math.sin(t * 0.25) + lean * 0.15 * (Math.abs(c.mn.y) * 2 - 1);
+      const pX = X(P.px), pY = Y(P.py);
       const xL = Math.min(X(P.px - 988), -W / 2 - 10);
+      // Curve types, q 0 at the left edge to 1 at the point: S-curve leaves flat and arrives flat, Ease out bends
+      // toward the point early, Ease in holds its height and bends late, Straight is a plain line. Strength is an exponent.
+      const ease = (k, q) => (k === 1 ? 1 - Math.pow(1 - q, 2) : k === 2 ? q * q : k === 3 ? q : sstep(0, 1, q));
       for (let i = 0; i < n; i++) {
         const f = n > 1 ? i / (n - 1) : 0.5;
-        const yL = Y(P.ly + (f - 0.5) * P.spread);
+        const top = f < 0.5; // art y runs down, so the first lines are the top half
+        const yL = Y(P.ly + (top ? -(0.5 - f) * 2 * P.spreadTop : (f - 0.5) * 2 * P.spreadBot) * open);
+        const kind = Math.round(top ? P.curveTop : P.curveBot), shape = top ? P.shapeTop : P.shapeBot;
         const head = frac(t * 0.06 / 1.2 * (0.8 + 0.4 * sd(st, i)) + sd(st, i, 1)); // laneLight runs 1.2 lengths per cycle
         const grow = c.introAt(0.01 * i);
-        pen.el(i);
+        const box = Math.round(P.gradBox);
+        pen.el(box === 2 ? i : box === 1 ? +!top : 0, i & 1); // shared box id = shared gradient; odd bit keeps Alternate working
         pen.poly(60, (s, o) => {
           const q = s * grow; // the intro draws each line from the left edge in toward the point
           o.x = lerp(xL, pX, q);
-          o.y = lerp(yL, pY, Math.pow(sstep(0, 1, q), P.shape));
+          o.y = lerp(yL, pY, Math.pow(ease(kind, q), shape));
           o.a = (lerp(0.15, 1, Math.pow(q, 1.5 * P.glow + 0.2))) * (0.85 + P.flow * mo * 1.4 * laneLight(q, head, 0.04));
         });
       }
@@ -1949,8 +1966,10 @@ Object.assign(CONCEPTS, {
       for (const dx of P.double ? [-2.5, 2.5] : [0]) S(-ha, dx, ha, dx, ua);
       // One clock drives every marker. "now" runs from just off the left edge to just off the right, so the USDM1 marker
       // never pops at midnight. Markers have fixed ids and are never "every other" shapes, so their stroke fill can't flip.
+      // The day starts (t = 0) with USDM1 centered in the early closed stretch, halfway between the frame edge and the open.
       const R = P.mark, span = 2 * half + 2 * R, v = 60 * P.speed, dayT = v > 0 ? span / v : 1;
-      const d = v > 0 ? frac(t / dayT + 0.42) : 0.55, now = -half - R + d * span;
+      const d0 = (hx(Math.min(P.openH, P.closeH) / 2) + half + R) / span;
+      const d = v > 0 ? frac(t / dayT + d0) : 0.55, now = -half - R + d * span;
       const base = id, mark = (slot, a0, b0, r, a) => {
         pen.el(base + slot, false);
         pen.disc(PX(a0, b0), PY(a0, b0), 0, r * u); ring(pen, PX(a0, b0), PY(a0, b0), 2 * r * u, 0, () => a);
@@ -2068,6 +2087,19 @@ export function normalize(cfg = {}) {
     };
     mig(cfg.params, out.params);
     if (out.portrait) mig(isObj(cfg.portrait) && isObj(cfg.portrait.params) && cfg.portrait.params.offset != null ? cfg.portrait.params : cfg.params, out.portrait.params);
+  }
+  // Risk: one Spread at left and Gather curve became separate top and bottom spreads and curves (same picture).
+  if (concept === 'risk') {
+    // Merged params still carry the old keys (desktop values flow into mobile), so read them from there.
+    const mig = (src, dst) => {
+      if (!isObj(dst)) return;
+      const has = (k) => isObj(src) && src[k] != null;
+      if (dst.spread != null) { if (!has('spreadTop')) dst.spreadTop = +dst.spread / 2; if (!has('spreadBot')) dst.spreadBot = +dst.spread / 2; }
+      if (dst.shape != null) { if (!has('shapeTop')) dst.shapeTop = +dst.shape; if (!has('shapeBot')) dst.shapeBot = +dst.shape; }
+      delete dst.spread; delete dst.shape;
+    };
+    mig(cfg.params, out.params);
+    if (out.portrait) mig(isObj(cfg.portrait) ? cfg.portrait.params : null, out.portrait.params);
   }
   // Stroke width runs 1 (hairline) to 3; early drafts used 0 for the hairline.
   for (const c of [out, out.portrait]) if (c) c.look.width = Math.min(3, Math.max(1, +c.look.width || 1));
